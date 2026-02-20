@@ -1,0 +1,147 @@
+.more-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.btn-back {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 0;
+  transition: color 0.2s;
+}
+
+.btn-back:hover {
+  color: #e2e8f0;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #a78bfa;
+  margin-bottom: 4px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #cbd5e1;
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  color: #e2e8f0;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  border-color: #a78bfa;
+}
+
+.form-select option {
+  background: #1e2535;
+}
+
+.form-textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.chip-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  transition: all 0.2s;
+}
+
+.chip-active {
+  background: rgba(124, 58, 237, 0.2);
+  border-color: #7c3aed;
+  color: #a78bfa;
+}
+
+.range-input {
+  width: 100%;
+  accent-color: #7c3aed;
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 10px;
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+.checkbox-row input[type='checkbox'] {
+  accent-color: #7c3aed;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.checkbox-label {
+  font-size: 13px;
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.checkbox-desc {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}

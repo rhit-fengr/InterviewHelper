@@ -1,6 +1,6 @@
 'use strict';
 
-const { buildSystemPrompt } = require('../services/openai.service');
+const { buildSystemPrompt, isConfigured } = require('../services/openai.service');
 
 describe('buildSystemPrompt', () => {
   it('includes candidate name', () => {
@@ -23,5 +23,12 @@ describe('buildSystemPrompt', () => {
   it('includes answer language', () => {
     const prompt = buildSystemPrompt({}, {}, { answerLang: 'zh-CN' });
     expect(prompt).toContain('zh-CN');
+  });
+});
+
+describe('isConfigured', () => {
+  it('is false when OPENAI_API_KEY env var is not set', () => {
+    // Tests run without the env var, so the service should report unconfigured
+    expect(isConfigured).toBe(false);
   });
 });

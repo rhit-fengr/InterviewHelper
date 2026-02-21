@@ -2,8 +2,14 @@
 
 const OpenAI = require('openai');
 
-if (!process.env.OPENAI_API_KEY) {
-  console.warn('[openai.service] WARNING: OPENAI_API_KEY is not set. AI endpoints will fail at runtime.');
+/**
+ * True when OPENAI_API_KEY is present; false otherwise.
+ * AI routes use this flag to return a clear 503 instead of failing mid-request.
+ */
+const isConfigured = Boolean(process.env.OPENAI_API_KEY);
+
+if (!isConfigured) {
+  console.warn('[openai.service] WARNING: OPENAI_API_KEY is not set. AI endpoints will return 503 until configured.');
 }
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'placeholder' });
@@ -89,4 +95,4 @@ async function detectQuestion(transcript, sensitivity = 'medium') {
   return JSON.parse(response.choices[0].message.content);
 }
 
-module.exports = { generateAnswer, detectQuestion, buildSystemPrompt };
+module.exports = { generateAnswer, detectQuestion, buildSystemPrompt, isConfigured };

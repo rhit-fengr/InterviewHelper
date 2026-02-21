@@ -1,32 +1,7 @@
 import React from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
+import { TOPICS, LANGUAGES } from '../../constants';
 import './InterviewSetup.css';
-
-const TOPICS = [
-  { value: 'software-engineering', label: 'Software Engineering' },
-  { value: 'behavioral', label: 'Behavioral' },
-  { value: 'system-design', label: 'System Design' },
-  { value: 'data-structures', label: 'Data Structures & Algorithms' },
-  { value: 'product-management', label: 'Product Management' },
-  { value: 'data-science', label: 'Data Science' },
-  { value: 'finance', label: 'Finance' },
-  { value: 'general', label: 'General' },
-];
-
-const LANGUAGES = [
-  { value: 'en-US', label: 'English (US)' },
-  { value: 'en-GB', label: 'English (UK)' },
-  { value: 'zh-CN', label: 'Chinese (Mandarin)' },
-  { value: 'zh-TW', label: 'Chinese (Traditional)' },
-  { value: 'es-ES', label: 'Spanish' },
-  { value: 'fr-FR', label: 'French' },
-  { value: 'de-DE', label: 'German' },
-  { value: 'ja-JP', label: 'Japanese' },
-  { value: 'ko-KR', label: 'Korean' },
-  { value: 'pt-BR', label: 'Portuguese (Brazil)' },
-  { value: 'hi-IN', label: 'Hindi' },
-  { value: 'ar-SA', label: 'Arabic' },
-];
 
 export default function InterviewSetup({ onStart }) {
   const { setup, updateSetup } = useInterviewStore();

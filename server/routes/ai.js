@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { generateAnswer, detectQuestion } = require('../services/openai.service');
+const { generateAnswer, detectQuestion, isConfigured } = require('../services/openai.service');
 
 const router = express.Router();
 
@@ -11,6 +11,10 @@ const router = express.Router();
  * Response: Server-Sent Events stream of answer chunks (JSON-encoded)
  */
 router.post('/answer', async (req, res) => {
+  if (!isConfigured) {
+    return res.status(503).json({ error: 'AI service is not configured. Set OPENAI_API_KEY.' });
+  }
+
   const { question, personalInfo, answerSettings, setup, conversationHistory } = req.body;
 
   if (!question) {
@@ -65,6 +69,10 @@ router.post('/answer', async (req, res) => {
  * Response: { isQuestion, question }
  */
 router.post('/detect-question', async (req, res) => {
+  if (!isConfigured) {
+    return res.status(503).json({ error: 'AI service is not configured. Set OPENAI_API_KEY.' });
+  }
+
   const { transcript, sensitivity } = req.body;
 
   if (!transcript) {

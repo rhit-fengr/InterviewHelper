@@ -60,17 +60,20 @@ describe('User routes', () => {
 });
 
 describe('AI routes (no OpenAI key)', () => {
-  it('POST /api/ai/answer returns 400 without question', async () => {
+  // When OPENAI_API_KEY is absent, routes return 503 before checking request body.
+  it('POST /api/ai/answer returns 503 when AI not configured', async () => {
     const res = await request(app)
       .post('/api/ai/answer')
-      .send({});
-    expect(res.status).toBe(400);
+      .send({ question: 'Tell me about yourself' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not configured/i);
   });
 
-  it('POST /api/ai/detect-question returns 400 without transcript', async () => {
+  it('POST /api/ai/detect-question returns 503 when AI not configured', async () => {
     const res = await request(app)
       .post('/api/ai/detect-question')
-      .send({});
-    expect(res.status).toBe(400);
+      .send({ transcript: 'Tell me about yourself' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not configured/i);
   });
 });

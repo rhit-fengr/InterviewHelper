@@ -1,24 +1,12 @@
 import React from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
+import {
+  BEHAVIORAL_STRUCTURES,
+  RESPONSE_STYLES,
+  ANSWER_LENGTHS,
+  DETECTION_SENSITIVITIES,
+} from '../../constants';
 import './MoreSettings.css';
-
-const STRUCTURES = ['STAR', 'CAR', 'PAR', 'SOAR'];
-const STYLES = [
-  { value: 'conversational', label: 'Conversational' },
-  { value: 'structured', label: 'Structured' },
-  { value: 'concise', label: 'Concise' },
-  { value: 'detailed', label: 'Detailed' },
-];
-const LENGTHS = [
-  { value: 'short', label: 'Short (~30s)' },
-  { value: 'medium', label: 'Medium (~1min)' },
-  { value: 'long', label: 'Long (~2min)' },
-];
-const SENSITIVITIES = [
-  { value: 'low', label: 'Low — explicit questions only' },
-  { value: 'medium', label: 'Medium — clear + implied questions' },
-  { value: 'high', label: 'High — any prompt/statement' },
-];
 
 export default function MoreSettings({ onBack }) {
   const {
@@ -103,7 +91,7 @@ export default function MoreSettings({ onBack }) {
         <div className="form-group">
           <label className="form-label">Behavioral Structure</label>
           <div className="chip-group">
-            {STRUCTURES.map((s) => (
+            {BEHAVIORAL_STRUCTURES.map((s) => (
               <button
                 key={s}
                 className={`chip ${answerSettings.behavioralStructure === s ? 'chip-active' : ''}`}
@@ -122,7 +110,7 @@ export default function MoreSettings({ onBack }) {
             value={answerSettings.responseStyle}
             onChange={(e) => updateAnswerSettings({ responseStyle: e.target.value })}
           >
-            {STYLES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            {RESPONSE_STYLES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
 
@@ -133,7 +121,7 @@ export default function MoreSettings({ onBack }) {
             value={answerSettings.answerLength}
             onChange={(e) => updateAnswerSettings({ answerLength: e.target.value })}
           >
-            {LENGTHS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+            {ANSWER_LENGTHS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select>
         </div>
 
@@ -144,7 +132,7 @@ export default function MoreSettings({ onBack }) {
             value={answerSettings.detectionSensitivity}
             onChange={(e) => updateAnswerSettings({ detectionSensitivity: e.target.value })}
           >
-            {SENSITIVITIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            {DETECTION_SENSITIVITIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
 

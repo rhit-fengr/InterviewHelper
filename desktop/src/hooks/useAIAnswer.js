@@ -34,25 +34,61 @@ export function useAIAnswer() {
       }
 
       // Read the streaming response
+      if (!response.body) {
+        throw new Error('No response body for streaming request.');
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullAnswer = '';
+      let sseBuffer = '';
+      let doneReceived = false;
+
+      const processEvent = (eventText) => {
+        const dataLines = eventText
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart());
+
+        if (!dataLines.length) return;
+
+        const payload = dataLines.join('\n');
+        if (payload === '[DONE]') {
+          doneReceived = true;
+          return;
+        }
+
+        if (payload.startsWith('[ERROR]')) {
+          throw new Error(payload.slice(7).trim() || 'Answer generation failed.');
+        }
+
+        fullAnswer += payload;
+        setAnswer(fullAnswer);
+      };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        // Parse SSE lines: "data: <text>\n\n"
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const text = line.slice(6);
-            if (text === '[DONE]') break;
-            fullAnswer += text;
-            setAnswer(fullAnswer);
-          }
+        sseBuffer += decoder.decode(value, { stream: true });
+        const events = sseBuffer.split('\n\n');
+        sseBuffer = events.pop() || '';
+
+        for (const eventText of events) {
+          processEvent(eventText);
+          if (doneReceived) break;
         }
+
+        if (doneReceived) break;
+      }
+
+      // Flush any trailing decoder buffer and parse final complete events.
+      sseBuffer += decoder.decode();
+      const remainingEvents = sseBuffer.split('\n\n');
+      for (const eventText of remainingEvents) {
+        if (!eventText.trim()) continue;
+        processEvent(eventText);
+        if (doneReceived) break;
       }
     } catch (err) {
       if (err.name !== 'AbortError') {

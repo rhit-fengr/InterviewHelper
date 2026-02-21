@@ -5,6 +5,10 @@ const { generateAnswer, detectQuestion } = require('../services/openai.service')
 
 const router = express.Router();
 
+function makeTraceId() {
+  return `trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /**
  * POST /api/ai/answer
  * Body: { question, personalInfo, answerSettings, setup, conversationHistory }
@@ -35,7 +39,9 @@ router.post('/answer', async (req, res) => {
     res.write('data: [DONE]\n\n');
     res.end();
   } catch (err) {
-    res.write(`data: [ERROR] ${err.message}\n\n`);
+    const traceId = makeTraceId();
+    console.error(`[AI_STREAM_ERROR] ${traceId}`, err);
+    res.write(`data: [ERROR] Failed to generate answer. Reference: ${traceId}\n\n`);
     res.end();
   }
 });

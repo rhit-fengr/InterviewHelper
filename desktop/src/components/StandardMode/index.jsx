@@ -14,6 +14,9 @@ export default function StandardMode({ onBack }) {
   const [lastQuestion, setLastQuestion] = useState('');
   const detectionTimeoutRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
+  // Track the in-flight question so we can save user+assistant pair when generation completes
+  const pendingQuestionRef = useRef(null);
+  const prevIsLoadingRef = useRef(false);
 
   // Keep latest values in refs so callbacks are stable and don't go stale
   const sessionRef = useRef(session);
@@ -30,19 +33,13 @@ export default function StandardMode({ onBack }) {
   const { answer, isLoading, error: aiError, generateAnswer, cancelGeneration, clearAnswer } = useAIAnswer();
 
   const triggerAnswerGeneration = useCallback((question) => {
-    const currentHistory = conversationHistoryRef.current;
-    const currentSettings = answerSettingsRef.current;
+    pendingQuestionRef.current = question;
     generateAnswer({
       question,
       personalInfo: personalInfoRef.current,
-      answerSettings: currentSettings,
+      answerSettings: answerSettingsRef.current,
       setup: setupRef.current,
-      conversationHistory: currentHistory,
-    }).then(() => {
-      setConversationHistory((prev) => [
-        ...prev.slice(-currentSettings.memoryLimit),
-        { role: 'user', content: question },
-      ]);
+      conversationHistory: conversationHistoryRef.current,
     });
   }, [generateAnswer]);
 
@@ -105,6 +102,22 @@ export default function StandardMode({ onBack }) {
   useEffect(() => {
     return () => clearTimeout(detectionTimeoutRef.current);
   }, []);
+
+  // Save completed conversation turn (user question + assistant answer) to history
+  useEffect(() => {
+    if (prevIsLoadingRef.current && !isLoading && pendingQuestionRef.current && answer) {
+      const question = pendingQuestionRef.current;
+      const limit = answerSettingsRef.current.memoryLimit;
+      // Multiply by 2 to account for user+assistant message pairs in each turn
+      setConversationHistory((prev) => [
+        ...prev.slice(-(limit * 2)),
+        { role: 'user', content: question },
+        { role: 'assistant', content: answer },
+      ]);
+      pendingQuestionRef.current = null;
+    }
+    prevIsLoadingRef.current = isLoading;
+  }, [isLoading, answer]);
 
   return (
     <div className="standard-panel">

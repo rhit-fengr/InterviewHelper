@@ -2,6 +2,10 @@
 
 const OpenAI = require('openai');
 
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('[openai.service] WARNING: OPENAI_API_KEY is not set. AI endpoints will fail at runtime.');
+}
+
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'placeholder' });
 
 const TOKEN_LIMITS = {

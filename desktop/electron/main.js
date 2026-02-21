@@ -49,37 +49,44 @@ app.on('window-all-closed', () => {
 
 // ── IPC: Window control ────────────────────────────────────────────────────
 
-ipcMain.handle('set-content-protection', (_event, enabled) => {
+function withWindow(fn) {
+  return (...args) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    return fn(...args);
+  };
+}
+
+ipcMain.handle('set-content-protection', withWindow((_event, enabled) => {
   mainWindow.setContentProtection(enabled);
-});
+}));
 
-ipcMain.handle('set-always-on-top', (_event, enabled) => {
+ipcMain.handle('set-always-on-top', withWindow((_event, enabled) => {
   mainWindow.setAlwaysOnTop(enabled, 'screen-saver');
-});
+}));
 
-ipcMain.handle('set-skip-taskbar', (_event, skip) => {
+ipcMain.handle('set-skip-taskbar', withWindow((_event, skip) => {
   mainWindow.setSkipTaskbar(skip);
-});
+}));
 
-ipcMain.handle('hide-window', () => {
+ipcMain.handle('hide-window', withWindow(() => {
   mainWindow.hide();
-});
+}));
 
-ipcMain.handle('show-window', () => {
+ipcMain.handle('show-window', withWindow(() => {
   mainWindow.show();
-});
+}));
 
-ipcMain.handle('minimize-window', () => {
+ipcMain.handle('minimize-window', withWindow(() => {
   mainWindow.minimize();
-});
+}));
 
-ipcMain.handle('close-window', () => {
+ipcMain.handle('close-window', withWindow(() => {
   mainWindow.close();
-});
+}));
 
-ipcMain.handle('set-opacity', (_event, opacity) => {
+ipcMain.handle('set-opacity', withWindow((_event, opacity) => {
   mainWindow.setOpacity(opacity);
-});
+}));
 
 ipcMain.handle('open-external', (_event, url) => {
   shell.openExternal(url);

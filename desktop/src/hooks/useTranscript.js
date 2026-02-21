@@ -13,6 +13,9 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
+  // Keep a stable ref to the latest enabled value so onend never closes over a stale copy.
+  const enabledRef = useRef(enabled);
+  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
   // Keep a stable ref to the callback so the recognition effect does not
   // restart whenever the caller re-renders with a new function reference.
   const onChangeRef = useRef(onTranscriptChange);
@@ -41,8 +44,9 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => {
       setIsListening(false);
-      // Auto-restart if still enabled
-      if (enabled) {
+      // Read the ref — not the closed-over value — to decide whether to restart.
+      // This prevents accidental restarts after the user has toggled listening off.
+      if (enabledRef.current && recognitionRef.current === recognition) {
         try {
           recognition.start();
         } catch (err) {
@@ -70,8 +74,9 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     recognitionRef.current = recognition;
 
     return () => {
-      recognition.stop();
+      // Nullify the ref before stopping so onend won't auto-restart
       recognitionRef.current = null;
+      recognition.stop();
     };
   }, [enabled, language]);
 

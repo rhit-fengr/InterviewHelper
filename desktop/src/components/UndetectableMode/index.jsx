@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
 import { useSocketSync } from '../../hooks/useSocketSync';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
 import { useTranscript } from '../../hooks/useTranscript';
 import './UndetectableMode.css';
+
+const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 
 function generateSessionCode() {
   const words = ['IRON', 'APEX', 'BOLT', 'NOVA', 'JADE', 'ECHO', 'FLUX', 'GRID'];
@@ -21,6 +23,18 @@ export default function UndetectableMode({ onBack }) {
 
   const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron;
 
+  // Keep latest values in refs so callbacks stay stable
+  const sessionRef = useRef(session);
+  const answerSettingsRef = useRef(answerSettings);
+  const personalInfoRef = useRef(personalInfo);
+  const setupRef = useRef(setup);
+  const conversationHistoryRef = useRef(conversationHistory);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => { answerSettingsRef.current = answerSettings; }, [answerSettings]);
+  useEffect(() => { personalInfoRef.current = personalInfo; }, [personalInfo]);
+  useEffect(() => { setupRef.current = setup; }, [setup]);
+  useEffect(() => { conversationHistoryRef.current = conversationHistory; }, [conversationHistory]);
+
   const {
     isConnected,
     clientConnected,
@@ -31,12 +45,62 @@ export default function UndetectableMode({ onBack }) {
 
   const { answer, isLoading, generateAnswer } = useAIAnswer();
 
+  // Debounce ref for question detection
+  const detectionTimeoutRef = useRef(null);
+  const lastDetectedAtRef = useRef(0);
+  // Track the in-flight question so we can save user+assistant pair when generation completes
+  const pendingQuestionRef = useRef(null);
+  const prevIsLoadingRef = useRef(false);
+  // Track how many characters of the current answer have already been streamed
+  const lastStreamedLengthRef = useRef(0);
+
+  const triggerAnswerGeneration = useCallback(async (question) => {
+    pendingQuestionRef.current = question;
+    await generateAnswer({
+      question,
+      personalInfo: personalInfoRef.current,
+      answerSettings: answerSettingsRef.current,
+      setup: setupRef.current,
+      conversationHistory: conversationHistoryRef.current,
+    });
+  }, [generateAnswer]);
+
+  const runQuestionDetection = useCallback(async (text) => {
+    if (!text.trim()) return;
+    const now = Date.now();
+    if (now - lastDetectedAtRef.current < 3000) return;
+    try {
+      const res = await fetch(`${SERVER_URL}/api/ai/detect-question`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: text, sensitivity: answerSettingsRef.current.detectionSensitivity }),
+      });
+      const data = await res.json();
+      if (data.isQuestion && data.question) {
+        lastDetectedAtRef.current = Date.now();
+        triggerAnswerGeneration(data.question);
+      }
+    } catch {
+      // Network error — skip detection
+    }
+  }, [triggerAnswerGeneration]);
+
+  const handleTranscriptUpdate = useCallback((text) => {
+    // Forward transcript to mobile
+    if (clientConnected) streamTranscript(sessionCode, text);
+    // Auto-detect question and generate answer if enabled
+    if (sessionRef.current.autoAnswer) {
+      clearTimeout(detectionTimeoutRef.current);
+      detectionTimeoutRef.current = setTimeout(() => {
+        runQuestionDetection(text);
+      }, 1500);
+    }
+  }, [clientConnected, sessionCode, streamTranscript, runQuestionDetection]);
+
   const { transcript } = useTranscript({
     enabled: isRunning,
     language: setup.interviewLang,
-    onTranscriptChange: useCallback((text) => {
-      if (clientConnected) streamTranscript(sessionCode, text);
-    }, [clientConnected, sessionCode, streamTranscript]),
+    onTranscriptChange: handleTranscriptUpdate,
   });
 
   // Register the session with the server once socket connects
@@ -46,14 +110,28 @@ export default function UndetectableMode({ onBack }) {
     }
   }, [isConnected, createSession, sessionCode]);
 
-  // Stream answer chunks to connected mobile client
+  // Stream only NEW (delta) answer characters to connected mobile client
   useEffect(() => {
-    if (!clientConnected || !answer) return;
-    streamAnswerChunk(sessionCode, answer, !isLoading);
+    if (!clientConnected) return;
+    if (answer === '') {
+      // New generation starting — reset stream position
+      lastStreamedLengthRef.current = 0;
+      return;
+    }
+    const delta = answer.slice(lastStreamedLengthRef.current);
+    if (delta) {
+      streamAnswerChunk(sessionCode, delta, false);
+      lastStreamedLengthRef.current = answer.length;
+    }
+    if (!isLoading && lastStreamedLengthRef.current > 0) {
+      // Signal completion after last delta has been sent
+      streamAnswerChunk(sessionCode, '', true);
+    }
   }, [answer, isLoading, clientConnected, sessionCode, streamAnswerChunk]);
 
   const handleStartStop = () => {
     setIsRunning((prev) => !prev);
+    clearTimeout(detectionTimeoutRef.current);
   };
 
   const handleHideToggle = () => {
@@ -67,14 +145,30 @@ export default function UndetectableMode({ onBack }) {
     setIsHidden((prev) => !prev);
   };
 
-  const handleAskQuestion = async (question) => {
+  const handleAskQuestion = useCallback(async (question) => {
     if (!question.trim()) return;
-    await generateAnswer({ question, personalInfo, answerSettings, setup, conversationHistory });
-    setConversationHistory((prev) => [
-      ...prev.slice(-answerSettings.memoryLimit),
-      { role: 'user', content: question },
-    ]);
-  };
+    await triggerAnswerGeneration(question);
+  }, [triggerAnswerGeneration]);
+
+  useEffect(() => {
+    return () => clearTimeout(detectionTimeoutRef.current);
+  }, []);
+
+  // Save completed conversation turn (user question + assistant answer) to history
+  useEffect(() => {
+    if (prevIsLoadingRef.current && !isLoading && pendingQuestionRef.current && answer) {
+      const question = pendingQuestionRef.current;
+      const limit = answerSettingsRef.current.memoryLimit;
+      // Multiply by 2 to account for user+assistant message pairs in each turn
+      setConversationHistory((prev) => [
+        ...prev.slice(-(limit * 2)),
+        { role: 'user', content: question },
+        { role: 'assistant', content: answer },
+      ]);
+      pendingQuestionRef.current = null;
+    }
+    prevIsLoadingRef.current = isLoading;
+  }, [isLoading, answer]);
 
   return (
     <div className="undetectable-panel">

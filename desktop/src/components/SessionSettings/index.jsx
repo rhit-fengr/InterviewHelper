@@ -3,10 +3,24 @@ import { useInterviewStore } from '../../store/interviewStore';
 import './SessionSettings.css';
 
 function Toggle({ checked, onChange, label }) {
+  const handleKeyDown = (event) => {
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault();
+      onChange(!checked);
+    }
+  };
+
   return (
     <label className="toggle-row">
       <span className="toggle-label">{label}</span>
-      <div className={`toggle ${checked ? 'toggle-on' : ''}`} onClick={() => onChange(!checked)}>
+      <div
+        className={`toggle ${checked ? 'toggle-on' : ''}`}
+        role="switch"
+        tabIndex={0}
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        onKeyDown={handleKeyDown}
+      >
         <div className="toggle-thumb" />
       </div>
     </label>

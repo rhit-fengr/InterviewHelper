@@ -1,6 +1,14 @@
 'use strict';
 
 const express = require('express');
+
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.warn('[billing] WARNING: STRIPE_SECRET_KEY is not set. Billing endpoints will fail at runtime.');
+}
+if (!process.env.STRIPE_PRICE_ID) {
+  console.warn('[billing] WARNING: STRIPE_PRICE_ID is not set. Subscription creation will fail at runtime.');
+}
+
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 
 const router = express.Router();

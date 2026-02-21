@@ -37,6 +37,10 @@ export function useAIAnswer() {
         throw new Error(`Server error: ${response.status}`);
       }
 
+      // Ensure the response body is available for streaming
+      if (!response.body) {
+        throw new Error('Streaming not supported: response body is not available.');
+      }
       if (!response.body) {
         throw new Error('Streaming not supported: response body is not available.');
       }

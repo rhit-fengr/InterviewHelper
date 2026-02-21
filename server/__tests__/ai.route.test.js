@@ -34,7 +34,10 @@ describe('AI answer streaming route', () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain('data: [ERROR] Failed to generate answer. Reference: trace_');
     expect(res.text).not.toContain('OpenAI token invalid');
-    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/\[AI_STREAM_ERROR\] trace_/),
+      expect.any(Error)
+    );
 
     errorSpy.mockRestore();
   });

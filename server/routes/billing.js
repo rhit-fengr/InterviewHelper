@@ -2,11 +2,17 @@
 
 const express = require('express');
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  console.warn('[billing] WARNING: STRIPE_SECRET_KEY is not set. Billing endpoints will fail at runtime.');
+/**
+ * True when Stripe is fully configured; false otherwise.
+ * Billing routes return 503 immediately when not configured.
+ */
+const isConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
+
+if (!isConfigured) {
+  console.warn('[billing] WARNING: STRIPE_SECRET_KEY is not set. Billing endpoints will return 503 until configured.');
 }
 if (!process.env.STRIPE_PRICE_ID) {
-  console.warn('[billing] WARNING: STRIPE_PRICE_ID is not set. Subscription creation will fail at runtime.');
+  console.warn('[billing] WARNING: STRIPE_PRICE_ID is not set. Subscription creation will return 503 until configured.');
 }
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
@@ -20,6 +26,10 @@ const MONTHLY_PRICE_ID = process.env.STRIPE_PRICE_ID || 'price_placeholder';
  * Creates a Stripe customer for the user.
  */
 router.post('/create-customer', async (req, res) => {
+  if (!isConfigured) {
+    return res.status(503).json({ error: 'Billing service is not configured. Set STRIPE_SECRET_KEY.' });
+  }
+
   const { email, name } = req.body;
 
   if (!email) {
@@ -30,7 +40,8 @@ router.post('/create-customer', async (req, res) => {
     const customer = await stripe.customers.create({ email, name });
     res.json({ customerId: customer.id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[billing] create-customer error:', err);
+    res.status(500).json({ error: 'Failed to create customer' });
   }
 });
 
@@ -39,6 +50,10 @@ router.post('/create-customer', async (req, res) => {
  * Creates a $30/month subscription for the customer.
  */
 router.post('/create-subscription', async (req, res) => {
+  if (!isConfigured || !process.env.STRIPE_PRICE_ID) {
+    return res.status(503).json({ error: 'Billing service is not configured. Set STRIPE_SECRET_KEY and STRIPE_PRICE_ID.' });
+  }
+
   const { customerId, paymentMethodId } = req.body;
 
   if (!customerId || !paymentMethodId) {
@@ -60,7 +75,8 @@ router.post('/create-subscription', async (req, res) => {
 
     res.json({ subscription });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[billing] create-subscription error:', err);
+    res.status(500).json({ error: 'Failed to create subscription' });
   }
 });
 
@@ -69,6 +85,10 @@ router.post('/create-subscription', async (req, res) => {
  * Cancels a subscription at period end.
  */
 router.post('/cancel-subscription', async (req, res) => {
+  if (!isConfigured) {
+    return res.status(503).json({ error: 'Billing service is not configured. Set STRIPE_SECRET_KEY.' });
+  }
+
   const { subscriptionId } = req.body;
 
   if (!subscriptionId) {
@@ -81,7 +101,8 @@ router.post('/cancel-subscription', async (req, res) => {
     });
     res.json({ subscription });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[billing] cancel-subscription error:', err);
+    res.status(500).json({ error: 'Failed to cancel subscription' });
   }
 });
 
@@ -100,7 +121,8 @@ router.post('/webhook', (req, res) => {
   try {
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
-    return res.status(400).json({ error: `Webhook Error: ${err.message}` });
+    console.error('[billing] webhook signature verification failed:', err);
+    return res.status(400).json({ error: 'Webhook signature verification failed' });
   }
 
   switch (event.type) {

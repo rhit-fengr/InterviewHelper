@@ -77,3 +77,30 @@ describe('AI routes (no OpenAI key)', () => {
     expect(res.body.error).toMatch(/not configured/i);
   });
 });
+
+describe('Billing routes (no Stripe key)', () => {
+  // When STRIPE_SECRET_KEY is absent, billing routes return 503.
+  it('POST /api/billing/create-customer returns 503 when billing not configured', async () => {
+    const res = await request(app)
+      .post('/api/billing/create-customer')
+      .send({ email: 'test@example.com' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not configured/i);
+  });
+
+  it('POST /api/billing/create-subscription returns 503 when billing not configured', async () => {
+    const res = await request(app)
+      .post('/api/billing/create-subscription')
+      .send({ customerId: 'cus_123', paymentMethodId: 'pm_123' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not configured/i);
+  });
+
+  it('POST /api/billing/cancel-subscription returns 503 when billing not configured', async () => {
+    const res = await request(app)
+      .post('/api/billing/cancel-subscription')
+      .send({ subscriptionId: 'sub_123' });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not configured/i);
+  });
+});

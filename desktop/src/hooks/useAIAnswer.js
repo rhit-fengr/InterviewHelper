@@ -48,7 +48,7 @@ export function useAIAnswer() {
         const dataLines = eventText
           .split('\n')
           .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart());
+          .map((line) => line.slice(5).replace(/^ /, ''));
 
         if (!dataLines.length) return;
 

@@ -4,6 +4,10 @@ const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 
 /**
  * useAIAnswer — sends a detected question to the backend and streams the answer.
+ *
+ * The server sends JSON-encoded SSE events: `data: {"text":"..."}\n\n`
+ * or `data: {"done":true}\n\n` / `data: {"error":"..."}\n\n`.
+ * We buffer partial reads to handle chunk boundary splits correctly.
  */
 export function useAIAnswer() {
   const [answer, setAnswer] = useState('');
@@ -33,62 +37,58 @@ export function useAIAnswer() {
         throw new Error(`Server error: ${response.status}`);
       }
 
-      // Read the streaming response
+      // Ensure the response body is available for streaming
       if (!response.body) {
-        throw new Error('No response body for streaming request.');
+        throw new Error('Streaming not supported: response body is not available.');
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullAnswer = '';
+
+      // SSE buffer — accumulates partial data across network chunk boundaries
       let sseBuffer = '';
-      let doneReceived = false;
-
-      const processEvent = (eventText) => {
-        const dataLines = eventText
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).replace(/^ /, ''));
-
-        if (!dataLines.length) return;
-
-        const payload = dataLines.join('\n');
-        if (payload === '[DONE]') {
-          doneReceived = true;
-          return;
-        }
-
-        if (payload.startsWith('[ERROR]')) {
-          throw new Error(payload.slice(7).trim() || 'Answer generation failed.');
-        }
-
-        fullAnswer += payload;
-        setAnswer(fullAnswer);
-      };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         sseBuffer += decoder.decode(value, { stream: true });
-        const events = sseBuffer.split('\n\n');
-        sseBuffer = events.pop() || '';
 
-        for (const eventText of events) {
-          processEvent(eventText);
-          if (doneReceived) break;
+        // Split into complete lines; keep the last partial line in the buffer
+        const lines = sseBuffer.split(/\r?\n/);
+        sseBuffer = lines.pop() ?? '';
+
+        // Accumulate data lines until the empty-line event boundary
+        let eventData = '';
+        for (const line of lines) {
+          if (line === '') {
+            // Empty line → dispatch the accumulated event
+            if (eventData) {
+              try {
+                const parsed = JSON.parse(eventData);
+                if (parsed.done) {
+                  return; // Stream finished cleanly
+                }
+                if (parsed.error) {
+                  setError(parsed.error);
+                  return;
+                }
+                if (parsed.text) {
+                  fullAnswer += parsed.text;
+                  setAnswer(fullAnswer);
+                }
+              } catch {
+                // Malformed JSON chunk — skip
+              }
+              eventData = '';
+            }
+          } else if (line.startsWith('data:')) {
+            // Append (trimmed) data line content
+            eventData += line.slice(5).trimStart();
+          }
+          // Ignore comment lines (`:`) and field names we don't use
         }
-
-        if (doneReceived) break;
-      }
-
-      // Flush any trailing decoder buffer and parse final complete events.
-      sseBuffer += decoder.decode();
-      const remainingEvents = sseBuffer.split('\n\n');
-      for (const eventText of remainingEvents) {
-        if (!eventText.trim()) continue;
-        processEvent(eventText);
-        if (doneReceived) break;
       }
     } catch (err) {
       if (err.name !== 'AbortError') {

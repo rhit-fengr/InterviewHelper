@@ -3,6 +3,7 @@
 jest.mock('../services/openai.service', () => ({
   generateAnswer: jest.fn(),
   detectQuestion: jest.fn(),
+  isConfigured: true,
 }));
 
 const express = require('express');
@@ -23,7 +24,7 @@ describe('AI answer streaming route', () => {
     jest.clearAllMocks();
   });
 
-  it('streams answer chunks and terminates with [DONE]', async () => {
+  it('streams answer chunks and terminates with done event', async () => {
     async function* mockAnswerStream() {
       yield { choices: [{ delta: { content: 'Hello' } }] };
       yield { choices: [{ delta: { content: ' world' } }] };
@@ -36,10 +37,10 @@ describe('AI answer streaming route', () => {
       .send({ question: 'Tell me about yourself' });
 
     expect(res.status).toBe(200);
-    expect(res.text).toContain('data: Hello\n\n');
-    expect(res.text).toContain('data:  world\n\n');
-    expect(res.text).toContain('data: [DONE]\n\n');
-    expect(res.text).not.toContain('[ERROR]');
+    expect(res.text).toContain('data: {"text":"Hello"}\n\n');
+    expect(res.text).toContain('data: {"text":" world"}\n\n');
+    expect(res.text).toContain('data: {"done":true}\n\n');
+    expect(res.text).not.toContain('"error"');
   });
 
   it('streams a generic error without leaking internal details', async () => {
@@ -51,7 +52,7 @@ describe('AI answer streaming route', () => {
       .send({ question: 'Tell me about yourself' });
 
     expect(res.status).toBe(200);
-    expect(res.text).toContain('data: [ERROR] Failed to generate answer. Reference: trace_');
+    expect(res.text).toMatch(/data: \{"error":"Failed to generate answer\. Reference: trace_/);
     expect(res.text).not.toContain('OpenAI token invalid');
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringMatching(/\[AI_STREAM_ERROR\] trace_/),

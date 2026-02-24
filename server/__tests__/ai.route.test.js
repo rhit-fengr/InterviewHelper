@@ -23,6 +23,25 @@ describe('AI answer streaming route', () => {
     jest.clearAllMocks();
   });
 
+  it('streams answer chunks and terminates with [DONE]', async () => {
+    async function* mockAnswerStream() {
+      yield { choices: [{ delta: { content: 'Hello' } }] };
+      yield { choices: [{ delta: { content: ' world' } }] };
+      yield { choices: [{ delta: { content: '' } }] };
+    }
+    generateAnswer.mockResolvedValue(mockAnswerStream());
+
+    const res = await request(app)
+      .post('/api/ai/answer')
+      .send({ question: 'Tell me about yourself' });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('data: Hello\n\n');
+    expect(res.text).toContain('data:  world\n\n');
+    expect(res.text).toContain('data: [DONE]\n\n');
+    expect(res.text).not.toContain('[ERROR]');
+  });
+
   it('streams a generic error without leaking internal details', async () => {
     generateAnswer.mockRejectedValue(new Error('OpenAI token invalid: sk-abc-secret'));
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});

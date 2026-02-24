@@ -52,10 +52,10 @@ describe('AI answer streaming route', () => {
       .send({ question: 'Tell me about yourself' });
 
     expect(res.status).toBe(200);
-    expect(res.text).toMatch(/data: \{"error":"Failed to generate answer\. Reference: trace_/);
+    expect(res.text).toContain('data: {"error":"Failed to start answer generation"}\n\n');
     expect(res.text).not.toContain('OpenAI token invalid');
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/\[AI_STREAM_ERROR\] trace_/),
+      '[AI answer] stream init error:',
       expect.any(Error)
     );
 

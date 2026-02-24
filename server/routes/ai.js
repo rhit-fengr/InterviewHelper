@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { generateAnswer, detectQuestion } = require('../services/openai.service');
+const { generateAnswer, detectQuestion, isConfigured } = require('../services/openai.service');
 
 const router = express.Router();
 
@@ -12,9 +12,13 @@ function makeTraceId() {
 /**
  * POST /api/ai/answer
  * Body: { question, personalInfo, answerSettings, setup, conversationHistory }
- * Response: Server-Sent Events stream of answer chunks
+ * Response: Server-Sent Events stream of answer chunks (JSON-encoded)
  */
 router.post('/answer', async (req, res) => {
+  if (!isConfigured) {
+    return res.status(503).json({ error: 'AI service is not configured. Set OPENAI_API_KEY.' });
+  }
+
   const { question, personalInfo, answerSettings, setup, conversationHistory } = req.body;
 
   if (!question) {
@@ -26,23 +30,42 @@ router.post('/answer', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  let stream;
   try {
-    const stream = await generateAnswer({ question, personalInfo, answerSettings, setup, conversationHistory });
-
-    for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content || '';
-      if (text) {
-        res.write(`data: ${text}\n\n`);
-      }
-    }
-
-    res.write('data: [DONE]\n\n');
-    res.end();
+    stream = await generateAnswer({ question, personalInfo, answerSettings, setup, conversationHistory });
   } catch (err) {
     const traceId = makeTraceId();
     console.error(`[AI_STREAM_ERROR] ${traceId}`, err);
-    res.write(`data: [ERROR] Failed to generate answer. Reference: ${traceId}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: `Failed to generate answer. Reference: ${traceId}` })}\n\n`);
     res.end();
+    return;
+  }
+
+  // Cancel the OpenAI stream when the client disconnects
+  req.on('close', () => {
+    try { stream.controller?.abort(); } catch { /* ignore */ }
+  });
+
+  try {
+    for await (const chunk of stream) {
+      if (res.writableEnded) break;
+      const text = chunk.choices[0]?.delta?.content || '';
+      if (text) {
+        // JSON-encode so embedded newlines don't break SSE framing
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
+    }
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    }
+  } catch (err) {
+    const traceId = makeTraceId();
+    console.error(`[AI_STREAM_ERROR] ${traceId}`, err);
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: `Failed to generate answer. Reference: ${traceId}` })}\n\n`);
+      res.end();
+    }
   }
 });
 
@@ -52,6 +75,10 @@ router.post('/answer', async (req, res) => {
  * Response: { isQuestion, question }
  */
 router.post('/detect-question', async (req, res) => {
+  if (!isConfigured) {
+    return res.status(503).json({ error: 'AI service is not configured. Set OPENAI_API_KEY.' });
+  }
+
   const { transcript, sensitivity } = req.body;
 
   if (!transcript) {
@@ -62,7 +89,8 @@ router.post('/detect-question', async (req, res) => {
     const result = await detectQuestion(transcript, sensitivity);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[AI detect-question] error:', err);
+    res.status(500).json({ error: 'Question detection failed' });
   }
 });
 

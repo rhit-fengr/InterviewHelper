@@ -41,6 +41,9 @@ export function useAIAnswer() {
       if (!response.body) {
         throw new Error('Streaming not supported: response body is not available.');
       }
+      if (!response.body) {
+        throw new Error('Streaming not supported: response body is not available.');
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();

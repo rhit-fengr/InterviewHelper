@@ -5,10 +5,6 @@ const { generateAnswer, detectQuestion, isConfigured } = require('../services/op
 
 const router = express.Router();
 
-function makeTraceId() {
-  return `trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /**
  * POST /api/ai/answer
  * Body: { question, personalInfo, answerSettings, setup, conversationHistory }
@@ -34,9 +30,8 @@ router.post('/answer', async (req, res) => {
   try {
     stream = await generateAnswer({ question, personalInfo, answerSettings, setup, conversationHistory });
   } catch (err) {
-    const traceId = makeTraceId();
-    console.error(`[AI_STREAM_ERROR] ${traceId}`, err);
-    res.write(`data: ${JSON.stringify({ error: `Failed to generate answer. Reference: ${traceId}` })}\n\n`);
+    console.error('[AI answer] stream init error:', err);
+    res.write(`data: ${JSON.stringify({ error: 'Failed to start answer generation' })}\n\n`);
     res.end();
     return;
   }
@@ -60,10 +55,9 @@ router.post('/answer', async (req, res) => {
       res.end();
     }
   } catch (err) {
-    const traceId = makeTraceId();
-    console.error(`[AI_STREAM_ERROR] ${traceId}`, err);
+    console.error('[AI answer] stream error:', err);
     if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify({ error: `Failed to generate answer. Reference: ${traceId}` })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: 'Answer generation failed' })}\n\n`);
       res.end();
     }
   }

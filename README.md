@@ -279,8 +279,24 @@ Output is in `desktop/out/`.
 - Check that your OS microphone permission is granted for Electron.
 - Verify the **Interview Language** setting matches the language you are speaking.
 
+**App feels laggy or buttons are unresponsive in Chrome**
+- Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.
+- If Chrome performance is a concern, try Microsoft Edge — the app is fully supported in both browsers.
+- Running the app as a packaged Electron app (`npm run build`) instead of in the browser dev server also reduces overhead.
+
+**"Failed to fetch" or "Cannot connect to server" error**
+- The backend server is not running. Start it with `cd server && npm run dev`.
+- Make sure `server/.env` exists and `OPENAI_API_KEY` is set (copy from `.env.example`).
+- If the desktop React app is served on a different port/host than the default `http://localhost:4000`, update `REACT_APP_SERVER_URL` in `desktop/.env.local`.
+
 **"AI service is not configured" error**
 - The `OPENAI_API_KEY` environment variable is missing or empty in `server/.env`. Add a valid key and restart the server.
+
+**Microphone permission denied ("Microphone access denied" error)**
+- Click the camera/microphone icon in your browser's address bar and allow microphone access for this page.
+- In Chrome: go to **Settings → Privacy and security → Site settings → Microphone** and ensure the site is not blocked.
+- In Edge: go to **Settings → Cookies and site permissions → Microphone** and allow the site.
+- After granting permission, refresh the page and try again.
 
 **"Rate limit reached" error**
 - Your OpenAI account has hit its per-minute token limit. Wait a few seconds and try again, or upgrade your OpenAI usage tier.

@@ -7,6 +7,7 @@ const sessions = new Map();
 /** socket.id → sessionCode (for O(1) cleanup on disconnect) */
 const socketToSession = new Map();
 const SESSION_CODE_PATTERN = /^[A-Z]{3,10}-\d{4}$/;
+const DEFAULT_SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
  * Parse CORS_ORIGIN env var into a value accepted by Socket.io/cors.
@@ -25,6 +26,24 @@ function normalizeSessionCode(raw) {
 
 function isValidSessionCode(code) {
   return SESSION_CODE_PATTERN.test(code);
+}
+
+function getSessionTtlMs() {
+  const parsed = Number(process.env.SESSION_TTL_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_TTL_MS;
+}
+
+function pruneExpiredSessions(sessionTtlMs, now = Date.now()) {
+  for (const [code, session] of sessions.entries()) {
+    if (now - session.createdAt < sessionTtlMs) continue;
+
+    session.hostSocket?.emit('session-error', { message: 'Session expired. Please create a new session.' });
+    session.clientSocket?.emit('session-error', { message: 'Session expired. Please reconnect with a new session code.' });
+
+    if (session.hostSocket?.id) socketToSession.delete(session.hostSocket.id);
+    if (session.clientSocket?.id) socketToSession.delete(session.clientSocket.id);
+    sessions.delete(code);
+  }
 }
 
 function cleanupSocketSession(socket) {
@@ -48,6 +67,7 @@ function initSocketServer(httpServer) {
   // Prevent stale in-memory state when the server is re-initialized in tests.
   sessions.clear();
   socketToSession.clear();
+  const sessionTtlMs = getSessionTtlMs();
 
   const io = new Server(httpServer, {
     cors: { origin: parseCorsOrigin(process.env.CORS_ORIGIN) },
@@ -56,6 +76,8 @@ function initSocketServer(httpServer) {
   io.on('connection', (socket) => {
     // Desktop creates a session
     socket.on('create-session', (payload = {}) => {
+      pruneExpiredSessions(sessionTtlMs);
+
       const { deviceInfo } = payload;
       const sessionCode = normalizeSessionCode(payload.sessionCode);
       if (!isValidSessionCode(sessionCode)) {
@@ -83,6 +105,8 @@ function initSocketServer(httpServer) {
 
     // Mobile joins an existing session
     socket.on('join-session', (payload = {}) => {
+      pruneExpiredSessions(sessionTtlMs);
+
       const sessionCode = normalizeSessionCode(payload.sessionCode);
       if (!isValidSessionCode(sessionCode)) {
         socket.emit('session-error', { message: 'Invalid session code format' });
@@ -117,6 +141,8 @@ function initSocketServer(httpServer) {
 
     // Desktop streams answer chunk (delta) to mobile
     socket.on('stream-answer', (payload = {}) => {
+      pruneExpiredSessions(sessionTtlMs);
+
       const sessionCode = normalizeSessionCode(payload.sessionCode);
       const { chunk, isDone } = payload;
       if (!isValidSessionCode(sessionCode)) return;
@@ -128,6 +154,8 @@ function initSocketServer(httpServer) {
 
     // Desktop streams transcript update to mobile
     socket.on('transcript-update', (payload = {}) => {
+      pruneExpiredSessions(sessionTtlMs);
+
       const sessionCode = normalizeSessionCode(payload.sessionCode);
       const { transcript } = payload;
       if (!isValidSessionCode(sessionCode)) return;
@@ -150,4 +178,6 @@ module.exports = {
   parseCorsOrigin,
   normalizeSessionCode,
   isValidSessionCode,
+  getSessionTtlMs,
+  pruneExpiredSessions,
 };

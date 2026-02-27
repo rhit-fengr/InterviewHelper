@@ -26,6 +26,7 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
 
   const scrollViewRef = useRef(null);
   const copyTimeoutRef = useRef(null);
+  const isStreamDoneRef = useRef(true); // true until the first chunk of a stream arrives
 
   const handleSessionJoined = useCallback(() => {
     setStatusMessage('Connected — waiting for interview…');
@@ -40,9 +41,16 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
   const handleAnswerChunk = useCallback((chunk, isDone) => {
     if (isDone) {
       setIsGenerating(false);
+      isStreamDoneRef.current = true;
     } else if (chunk) {
+      if (isStreamDoneRef.current) {
+        // New stream starting — replace the previous answer instead of appending
+        setAnswer(chunk);
+        isStreamDoneRef.current = false;
+      } else {
+        setAnswer((prev) => prev + chunk);
+      }
       setIsGenerating(true);
-      setAnswer((prev) => prev + chunk);
       // Auto-scroll to end as answer streams in
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }

@@ -36,6 +36,12 @@ export default function MoreSettings({ onBack }) {
     if (isElectron) window.electronAPI.setSkipTaskbar(val);
   };
 
+  const handleAlwaysOnTop = (e) => {
+    const val = e.target.checked;
+    updateDisplaySettings({ alwaysOnTop: val });
+    if (isElectron) window.electronAPI.setAlwaysOnTop(val);
+  };
+
   return (
     <div className="more-panel">
       <div className="panel-header">
@@ -177,6 +183,18 @@ export default function MoreSettings({ onBack }) {
             className="range-input"
           />
         </div>
+
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={displaySettings.alwaysOnTop}
+            onChange={handleAlwaysOnTop}
+          />
+          <div>
+            <div className="checkbox-label">Always On Top</div>
+            <div className="checkbox-desc">Keep Interview Hammer above other windows</div>
+          </div>
+        </label>
       </section>
 
       {/* Advanced Settings */}

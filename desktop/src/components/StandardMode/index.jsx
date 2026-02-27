@@ -75,7 +75,9 @@ export default function StandardMode({ onBack }) {
   }, [runQuestionDetection]);
 
   const { transcript, isListening, error: transcriptError, clearTranscript } = useTranscript({
-    enabled: isRunning && session.showTranscript,
+    // Enable transcript when autoAnswer is on so we can run background question detection,
+    // even if the transcript UI is hidden (showTranscript === false).
+    enabled: isRunning && (session.showTranscript || session.autoAnswer),
     language: setup.interviewLang,
     onTranscriptChange: handleTranscriptUpdate,
   });
@@ -89,6 +91,7 @@ export default function StandardMode({ onBack }) {
 
   const handleToggle = () => {
     if (isRunning) {
+      clearTimeout(detectionTimeoutRef.current);
       setIsRunning(false);
       cancelGeneration();
     } else {
@@ -107,13 +110,16 @@ export default function StandardMode({ onBack }) {
   useEffect(() => {
     if (prevIsLoadingRef.current && !isLoading && pendingQuestionRef.current && answer) {
       const question = pendingQuestionRef.current;
-      const limit = answerSettingsRef.current.memoryLimit;
-      // Multiply by 2 to account for user+assistant message pairs in each turn
-      setConversationHistory((prev) => [
-        ...prev.slice(-(limit * 2)),
-        { role: 'user', content: question },
-        { role: 'assistant', content: answer },
-      ]);
+      const limit = Math.max(2, Number(answerSettingsRef.current.memoryLimit) || 10);
+      const messageLimit = limit * 2; // each turn has 2 messages: user + assistant
+      setConversationHistory((prev) => {
+        const next = [
+          ...prev,
+          { role: 'user', content: question },
+          { role: 'assistant', content: answer },
+        ];
+        return next.slice(-messageLimit);
+      });
       pendingQuestionRef.current = null;
     }
     prevIsLoadingRef.current = isLoading;
@@ -135,7 +141,7 @@ export default function StandardMode({ onBack }) {
           {isRunning ? '⏹ Stop Listening' : '🎙️ Start Listening'}
         </button>
         {isRunning && (
-          <button className="btn-clear" onClick={() => { clearAnswer(); clearTranscript(); }}>
+          <button className="btn-clear" onClick={() => { clearAnswer(); clearTranscript(); setLastQuestion(''); }}>
             Clear
           </button>
         )}

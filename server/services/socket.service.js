@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const sessions = new Map();
 /** socket.id → sessionCode (for O(1) cleanup on disconnect) */
 const socketToSession = new Map();
+const SESSION_CODE_PATTERN = /^[A-Z]{3,10}-\d{4}$/;
 
 /**
  * Parse CORS_ORIGIN env var into a value accepted by Socket.io/cors.
@@ -17,7 +18,37 @@ function parseCorsOrigin(raw) {
   return parts.length === 1 ? parts[0] : parts;
 }
 
+function normalizeSessionCode(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().toUpperCase();
+}
+
+function isValidSessionCode(code) {
+  return SESSION_CODE_PATTERN.test(code);
+}
+
+function cleanupSocketSession(socket) {
+  const code = socketToSession.get(socket.id);
+  socketToSession.delete(socket.id);
+
+  if (!code) return;
+  const session = sessions.get(code);
+  if (!session) return;
+
+  if (session.hostSocket === socket) {
+    session.clientSocket?.emit('host-disconnected');
+    sessions.delete(code);
+  } else if (session.clientSocket === socket) {
+    session.hostSocket?.emit('client-disconnected');
+    session.clientSocket = null;
+  }
+}
+
 function initSocketServer(httpServer) {
+  // Prevent stale in-memory state when the server is re-initialized in tests.
+  sessions.clear();
+  socketToSession.clear();
+
   const io = new Server(httpServer, {
     cors: { origin: parseCorsOrigin(process.env.CORS_ORIGIN) },
   });
@@ -25,8 +56,20 @@ function initSocketServer(httpServer) {
   io.on('connection', (socket) => {
     // Desktop creates a session
     socket.on('create-session', (payload = {}) => {
-      const { sessionCode, deviceInfo } = payload;
-      if (!sessionCode) return;
+      const { deviceInfo } = payload;
+      const sessionCode = normalizeSessionCode(payload.sessionCode);
+      if (!isValidSessionCode(sessionCode)) {
+        socket.emit('session-error', { message: 'Invalid session code format' });
+        return;
+      }
+
+      cleanupSocketSession(socket);
+
+      const existing = sessions.get(sessionCode);
+      if (existing?.hostSocket?.connected) {
+        socket.emit('session-error', { message: 'Session code already in use' });
+        return;
+      }
 
       sessions.set(sessionCode, {
         hostSocket: socket,
@@ -40,15 +83,22 @@ function initSocketServer(httpServer) {
 
     // Mobile joins an existing session
     socket.on('join-session', (payload = {}) => {
-      const { sessionCode } = payload;
-      if (!sessionCode) {
-        socket.emit('session-error', { message: 'sessionCode is required' });
+      const sessionCode = normalizeSessionCode(payload.sessionCode);
+      if (!isValidSessionCode(sessionCode)) {
+        socket.emit('session-error', { message: 'Invalid session code format' });
         return;
       }
+
+      cleanupSocketSession(socket);
 
       const session = sessions.get(sessionCode);
       if (!session) {
         socket.emit('session-error', { message: 'Session not found' });
+        return;
+      }
+
+      if (session.hostSocket === socket) {
+        socket.emit('session-error', { message: 'Host cannot join as mobile client' });
         return;
       }
 
@@ -67,43 +117,37 @@ function initSocketServer(httpServer) {
 
     // Desktop streams answer chunk (delta) to mobile
     socket.on('stream-answer', (payload = {}) => {
-      const { sessionCode, chunk, isDone } = payload;
-      if (!sessionCode) return;
+      const sessionCode = normalizeSessionCode(payload.sessionCode);
+      const { chunk, isDone } = payload;
+      if (!isValidSessionCode(sessionCode)) return;
       const session = sessions.get(sessionCode);
-      if (session?.clientSocket) {
+      if (session?.hostSocket === socket && session.clientSocket) {
         session.clientSocket.emit('answer-chunk', { chunk, isDone });
       }
     });
 
     // Desktop streams transcript update to mobile
     socket.on('transcript-update', (payload = {}) => {
-      const { sessionCode, transcript } = payload;
-      if (!sessionCode) return;
+      const sessionCode = normalizeSessionCode(payload.sessionCode);
+      const { transcript } = payload;
+      if (!isValidSessionCode(sessionCode)) return;
       const session = sessions.get(sessionCode);
-      if (session?.clientSocket) {
+      if (session?.hostSocket === socket && session.clientSocket) {
         session.clientSocket.emit('transcript-update', { transcript });
       }
     });
 
     socket.on('disconnect', () => {
-      const code = socketToSession.get(socket.id);
-      socketToSession.delete(socket.id);
-
-      if (!code) return;
-      const session = sessions.get(code);
-      if (!session) return;
-
-      if (session.hostSocket === socket) {
-        session.clientSocket?.emit('host-disconnected');
-        sessions.delete(code);
-      } else if (session.clientSocket === socket) {
-        session.hostSocket?.emit('client-disconnected');
-        session.clientSocket = null;
-      }
+      cleanupSocketSession(socket);
     });
   });
 
   return io;
 }
 
-module.exports = { initSocketServer };
+module.exports = {
+  initSocketServer,
+  parseCorsOrigin,
+  normalizeSessionCode,
+  isValidSessionCode,
+};

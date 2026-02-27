@@ -158,13 +158,16 @@ export default function UndetectableMode({ onBack }) {
   useEffect(() => {
     if (prevIsLoadingRef.current && !isLoading && pendingQuestionRef.current && answer) {
       const question = pendingQuestionRef.current;
-      const limit = answerSettingsRef.current.memoryLimit;
-      // Multiply by 2 to account for user+assistant message pairs in each turn
-      setConversationHistory((prev) => [
-        ...prev.slice(-(limit * 2)),
-        { role: 'user', content: question },
-        { role: 'assistant', content: answer },
-      ]);
+      const limit = Math.max(2, Number(answerSettingsRef.current.memoryLimit) || 10);
+      setConversationHistory((prev) => {
+        const next = [
+          ...prev,
+          { role: 'user', content: question },
+          { role: 'assistant', content: answer },
+        ];
+        // Keep at most `limit` conversation turns (user+assistant pairs) => `limit * 2` messages
+        return next.slice(-(limit * 2));
+      });
       pendingQuestionRef.current = null;
     }
     prevIsLoadingRef.current = isLoading;
@@ -224,7 +227,7 @@ export default function UndetectableMode({ onBack }) {
       </div>
 
       {/* Live transcript preview (desktop side only) */}
-      {isRunning && transcript && (
+      {session.showTranscript && isRunning && transcript && (
         <div className="transcript-preview">
           <span className="box-label">🎤 Live</span>
           <p className="transcript-text">{transcript}</p>

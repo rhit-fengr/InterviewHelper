@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { consumeSSEChunk, flushSSEState } from '../utils/sse';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 
@@ -41,56 +42,59 @@ export function useAIAnswer() {
       if (!response.body) {
         throw new Error('Streaming not supported: response body is not available.');
       }
-      if (!response.body) {
-        throw new Error('Streaming not supported: response body is not available.');
-      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullAnswer = '';
+      let parserState = { buffer: '', eventData: '' };
+      let shouldStop = false;
 
-      // SSE buffer — accumulates partial data across network chunk boundaries
-      let sseBuffer = '';
+      const processEventData = (eventData) => {
+        try {
+          const parsed = JSON.parse(eventData);
+          if (parsed.done) {
+            return true;
+          }
+          if (parsed.error) {
+            setError(parsed.error);
+            return true;
+          }
+          if (parsed.text) {
+            fullAnswer += parsed.text;
+            setAnswer(fullAnswer);
+          }
+        } catch {
+          // Malformed JSON chunk — skip
+        }
+        return false;
+      };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        sseBuffer += decoder.decode(value, { stream: true });
+        const decoded = decoder.decode(value, { stream: true });
+        const parsedChunk = consumeSSEChunk(decoded, parserState);
+        parserState = parsedChunk.state;
 
-        // Split into complete lines; keep the last partial line in the buffer
-        const lines = sseBuffer.split(/\r?\n/);
-        sseBuffer = lines.pop() ?? '';
-
-        // Accumulate data lines until the empty-line event boundary
-        let eventData = '';
-        for (const line of lines) {
-          if (line === '') {
-            // Empty line → dispatch the accumulated event
-            if (eventData) {
-              try {
-                const parsed = JSON.parse(eventData);
-                if (parsed.done) {
-                  return; // Stream finished cleanly
-                }
-                if (parsed.error) {
-                  setError(parsed.error);
-                  return;
-                }
-                if (parsed.text) {
-                  fullAnswer += parsed.text;
-                  setAnswer(fullAnswer);
-                }
-              } catch {
-                // Malformed JSON chunk — skip
-              }
-              eventData = '';
-            }
-          } else if (line.startsWith('data:')) {
-            // Append (trimmed) data line content
-            eventData += line.slice(5).trimStart();
+        for (const eventData of parsedChunk.events) {
+          if (processEventData(eventData)) {
+            shouldStop = true;
+            break;
           }
-          // Ignore comment lines (`:`) and field names we don't use
+        }
+
+        if (shouldStop) {
+          break;
+        }
+      }
+
+      if (!shouldStop) {
+        const flushed = flushSSEState(parserState);
+        for (const eventData of flushed.events) {
+          if (processEventData(eventData)) {
+            break;
+          }
         }
       }
     } catch (err) {

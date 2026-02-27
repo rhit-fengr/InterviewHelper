@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import './App.css';
 import InterviewSetup from './components/InterviewSetup';
 import SessionSettings from './components/SessionSettings';
 import MoreSettings from './components/MoreSettings';
 import StandardMode from './components/StandardMode';
 import UndetectableMode from './components/UndetectableMode';
+import { useInterviewStore } from './store/interviewStore';
 
 const VIEWS = {
   SETUP: 'setup',
@@ -16,8 +17,24 @@ const VIEWS = {
 
 export default function App() {
   const [view, setView] = useState(VIEWS.SETUP);
+  const { displaySettings, advancedSettings } = useInterviewStore();
 
   const navigate = (target) => setView(target);
+
+  useEffect(() => {
+    const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron;
+    if (!isElectron) return;
+
+    window.electronAPI.setOpacity(displaySettings.windowOpacity);
+    window.electronAPI.setAlwaysOnTop(displaySettings.alwaysOnTop);
+    window.electronAPI.setContentProtection(advancedSettings.hideFromScreenSharing);
+    window.electronAPI.setSkipTaskbar(advancedSettings.hideAppIcon);
+  }, [
+    displaySettings.windowOpacity,
+    displaySettings.alwaysOnTop,
+    advancedSettings.hideFromScreenSharing,
+    advancedSettings.hideAppIcon,
+  ]);
 
   return (
     <div className="app-container">

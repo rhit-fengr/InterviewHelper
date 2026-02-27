@@ -48,8 +48,14 @@ interview-hammer/
 │   │   └── socket.service.js
 │   ├── app.js
 │   └── index.js
-└── shared/                    # Shared constants
-    └── constants.js
+└── mobile/                    # React Native (Expo) companion app
+    ├── screens/
+    │   ├── ConnectScreen.js   # Enter server URL + session code
+    │   └── SessionScreen.js   # Live answer streaming display
+    ├── hooks/
+    │   └── useSocketClient.js # Socket.io client lifecycle
+    ├── App.js
+    └── package.json
 ```
 
 ---
@@ -82,6 +88,17 @@ npm start
 ```
 
 This launches the React dev server on port 3000, then opens the Electron window.
+
+### 3. Start the mobile companion app (Undetectable Mode)
+
+```bash
+cd mobile
+cp .env.example .env          # Set EXPO_PUBLIC_SERVER_URL if needed
+npm install
+npm start
+```
+
+Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / `npm run android` for a native build.
 
 ---
 
@@ -146,4 +163,4 @@ Output is in `desktop/out/`.
 | Real-time | Socket.io |
 | AI | OpenAI GPT-4o (streaming) |
 | Payments | Stripe |
-| Mobile (Phase 2) | React Native |
+| Mobile | React Native (Expo) |

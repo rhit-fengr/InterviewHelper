@@ -35,7 +35,12 @@ export function useAIAnswer() {
       });
 
       if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+        let message = `Server error: ${response.status}`;
+        try {
+          const body = await response.json();
+          if (body.error) message = body.error;
+        } catch { /* ignore parse errors */ }
+        throw new Error(message);
       }
 
       // Ensure the response body is available for streaming
@@ -99,7 +104,13 @@ export function useAIAnswer() {
       }
     } catch (err) {
       if (err.name !== 'AbortError') {
-        setError(err.message);
+        // TypeError with 'fetch' in the message means the server is unreachable
+        const isNetworkError = err.name === 'TypeError' && /fetch/i.test(err.message);
+        setError(
+          isNetworkError
+            ? `Cannot connect to server at ${SERVER_URL}. Make sure the backend server is running (cd server && npm run dev).`
+            : err.message
+        );
       }
     } finally {
       setIsLoading(false);

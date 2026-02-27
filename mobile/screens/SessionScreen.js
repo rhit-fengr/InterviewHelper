@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -80,7 +80,15 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
     setAnswer('');
     setTranscript('');
     setIsGenerating(false);
+    clearTimeout(copyTimeoutRef.current);
+    setCopied(false);
   };
+
+  // Clear the copy-confirmation timeout when the component unmounts to avoid
+  // triggering a state update on an already-unmounted component.
+  useEffect(() => {
+    return () => clearTimeout(copyTimeoutRef.current);
+  }, []);
 
   const confirmDisconnect = () => {
     Alert.alert(

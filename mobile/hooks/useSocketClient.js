@@ -87,6 +87,13 @@ export function useSocketClient({
       onHostDisconnectedRef.current?.();
     });
 
+    socket.on('connect_error', (error) => {
+      setSessionStatus('error');
+      const base = 'Unable to connect to the server. Please check the server URL and your network connection.';
+      const message = error?.message ? `${base} (${error.message})` : base;
+      onSessionErrorRef.current?.(message);
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;

@@ -167,4 +167,48 @@ describe('useSocketClient', () => {
     unmount();
     expect(socket.disconnect).toHaveBeenCalled();
   });
+
+  it('sets sessionStatus to "error" and calls onSessionError on connect_error', () => {
+    const onSessionError = jest.fn();
+    const { result } = renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://unreachable:4000',
+        sessionCode: 'TEST-1234',
+        onSessionError,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => {
+      socket._trigger('connect_error', new Error('ECONNREFUSED'));
+    });
+
+    expect(result.current.sessionStatus).toBe('error');
+    expect(onSessionError).toHaveBeenCalledWith(
+      expect.stringContaining('Unable to connect to the server')
+    );
+    expect(onSessionError).toHaveBeenCalledWith(
+      expect.stringContaining('ECONNREFUSED')
+    );
+  });
+
+  it('calls onSessionError with base message when connect_error has no message', () => {
+    const onSessionError = jest.fn();
+    renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://unreachable:4000',
+        sessionCode: 'TEST-1234',
+        onSessionError,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => {
+      socket._trigger('connect_error', {});
+    });
+
+    expect(onSessionError).toHaveBeenCalledWith(
+      expect.stringContaining('Unable to connect to the server')
+    );
+  });
 });

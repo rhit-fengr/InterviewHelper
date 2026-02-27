@@ -4,8 +4,9 @@
   "description": "AI Interview Helper Desktop Application",
   "main": "electron/main.js",
   "scripts": {
-    "start": "concurrently \"npm run react-start\" \"wait-on http://localhost:3000 && electron .\"",
-    "react-start": "react-scripts start",
+    "start": "concurrently \"npm run server\" \"npm run react-start\" \"wait-on http://localhost:3000 && electron .\"",
+    "react-start": "BROWSER=none react-scripts start",
+    "server": "cd ../server && npm run dev",
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder",
     "test": "react-scripts test"

@@ -66,6 +66,7 @@ interview-hammer/
 
 - Node.js 18+
 - An [OpenAI API key](https://platform.openai.com/api-keys)
+- **Chrome or Chromium-based browser / Electron** — Web Speech API is only available in Chromium. The desktop app runs inside Electron (which bundles Chromium), so speech recognition works out of the box. If you open the React app in Firefox or Safari without Electron, the `useTranscript` hook will display an error and disable the mic button.
 
 ### 1. Start the server
 
@@ -131,6 +132,94 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 
 ---
 
+## How It Works
+
+### Speech Recognition (`useTranscript.js`)
+
+Speech-to-text is powered by the browser's native [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API) (`SpeechRecognition` / `webkitSpeechRecognition`). The hook:
+
+- Runs continuously with `interimResults: true` so you see words as you speak.
+- Automatically restarts if the browser ends the session (e.g. after a short pause) — the restart is guarded by a ref so it won't fire after the user has explicitly stopped.
+- Exposes an `error` state for any `SpeechRecognitionError` except `no-speech` (brief silence is normal and should not surface as a user-visible error).
+- Sets `recognition.lang` from the **Interview Language** setting, so the API listens in the right language. If noise or an unexpected language is detected, the transcript may be garbled — you can clear it manually or wait for the next speech segment to overwrite it.
+
+### AI Prompt Engineering (`openai.service.js`)
+
+Every answer request builds a personalised system prompt that includes:
+
+- **Candidate profile** — name, current role, company, years of experience, skills, work history, education.
+- **Answer structure** — the chosen behavioral framework (STAR / CAR / PAR / SOAR).
+- **Style & length** — conversational, structured, concise, or detailed; token budget maps to short (~200 tokens), medium (~500 tokens), or long (~1,000 tokens).
+- **Answer language** — instructs GPT-4o to reply in the chosen language.
+- **Additional context** — anything you add in the *Additional Instructions* field.
+
+The model is told to respond naturally as the candidate (no "As an AI…" preamble).
+
+### Detection Sensitivity
+
+Detection Sensitivity controls how aggressively `POST /api/ai/detect-question` classifies incoming transcript text as an interview question. The setting maps to a natural-language instruction sent to `gpt-4o-mini`:
+
+| Level | Behaviour |
+|---|---|
+| **Low** | Triggers only on explicit questions with a question mark. |
+| **Medium** (default) | Triggers on clear questions and reasonably implied questions. |
+| **High** | Triggers on explicit questions, implicit questions, and subtle prompts like "tell me about…" or "walk me through…". |
+
+The result is `{ isQuestion: boolean, question: string | null }`. If `isQuestion` is `true` the extracted question is sent to `POST /api/ai/answer` for streaming generation.
+
+---
+
+## Error Handling
+
+### OpenAI API
+
+| Situation | What happens |
+|---|---|
+| `OPENAI_API_KEY` not set | Server starts with a warning; `/api/ai/*` routes return `503` immediately. |
+| Network error / timeout | The OpenAI client is configured with a **30-second timeout** and **3 automatic retries** (with exponential back-off). If all retries fail the SSE stream sends `{"error":"Failed to start answer generation"}` and closes. |
+| Rate limit (HTTP 429) | Caught as a distinct error class; the SSE stream sends `{"error":"Rate limit reached. Please wait a moment and try again."}` so the user sees an actionable message instead of a generic failure. |
+| Streaming error mid-response | Caught in the `for await` loop; sends `{"error":"Answer generation failed"}` and closes the stream. |
+
+### Speech Recognition
+
+| Situation | What happens |
+|---|---|
+| Browser does not support Web Speech API | `useTranscript` sets `error` to "Speech recognition is not supported in this browser." The mic button is disabled. |
+| `no-speech` error | Silently ignored — brief silence is not treated as an error. |
+| Other `SpeechRecognitionError` | Surfaced via the `error` state and displayed in the UI error box. |
+| Recognition session ends unexpectedly | The `onend` handler restarts automatically as long as listening is still enabled. |
+
+### Network / WebSocket
+
+| Situation | What happens |
+|---|---|
+| Server unreachable (mobile) | `useSocketClient` reports `connect_error`; `sessionStatus` → `'error'`; `onSessionError` is called with a human-readable message including the underlying OS error. |
+| Reconnection | Socket.io is configured with `reconnectionAttempts: 5` and `reconnectionDelay: 2000 ms`. |
+| Host desktop disconnects | Mobile receives `host-disconnected`; `sessionStatus` → `'error'`; the UI shows a reconnect prompt. |
+| Session code expired (> 2 hours) | Both host and mobile receive `session-error` with "Session expired" message. The TTL is configurable via the `SESSION_TTL_MS` environment variable. |
+
+### Billing
+
+| Situation | What happens |
+|---|---|
+| `STRIPE_SECRET_KEY` not set | Billing routes return `503` with a clear error. |
+| Stripe API error | Caught and logged server-side; client receives `{"error":"Failed to ..."}` with no internal detail leaked. |
+
+---
+
+## Stripe Billing Integration
+
+Billing is a **real Stripe integration**, not a placeholder. The server (`routes/billing.js`) implements:
+
+- `POST /api/billing/create-customer` — creates a Stripe Customer object.
+- `POST /api/billing/create-subscription` — attaches a payment method and creates a `$30/month` subscription using the configured `STRIPE_PRICE_ID`.
+- `POST /api/billing/cancel-subscription` — schedules cancellation at period end.
+- `POST /api/billing/webhook` — verifies Stripe webhook signatures and handles `customer.subscription.deleted` and `invoice.payment_succeeded` events.
+
+To enable billing, set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET` in `server/.env`. Use [Stripe test mode](https://stripe.com/docs/testing) keys during development.
+
+---
+
 ## Undetectable Mode
 
 1. Open the desktop app and navigate to **Undetectable Mode**
@@ -138,6 +227,22 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 3. Open the mobile companion app and tap **Connect to Session**
 4. Enter the session code — answers stream to your phone in real time
 5. Optionally click **Hide App** to hide the desktop window
+
+---
+
+## Automated Tests
+
+```bash
+cd server && npm test    # 29 Jest tests (routes, services, socket integration)
+cd mobile && npm test    # Jest + React Native Testing Library (hooks + screens)
+```
+
+The server test suite covers:
+
+- AI streaming route — happy path, generic errors, and HTTP 429 rate-limit errors.
+- `buildSystemPrompt` — candidate name, missing fields, behavioral structure, answer language.
+- Socket service — session creation, mobile join, transcript/answer forwarding, spoofing prevention, host disconnect notification, session expiry.
+- Health, session, user, AI, and billing routes (all with and without credentials).
 
 ---
 
@@ -164,3 +269,26 @@ Output is in `desktop/out/`.
 | AI | OpenAI GPT-4o (streaming) |
 | Payments | Stripe |
 | Mobile | React Native (Expo) |
+
+---
+
+## Troubleshooting
+
+**No speech is being recognised**
+- Make sure you are running the app through Electron (not a non-Chromium browser).
+- Check that your OS microphone permission is granted for Electron.
+- Verify the **Interview Language** setting matches the language you are speaking.
+
+**"AI service is not configured" error**
+- The `OPENAI_API_KEY` environment variable is missing or empty in `server/.env`. Add a valid key and restart the server.
+
+**"Rate limit reached" error**
+- Your OpenAI account has hit its per-minute token limit. Wait a few seconds and try again, or upgrade your OpenAI usage tier.
+
+**Mobile app cannot connect**
+- Ensure the device is on the same network as the server.
+- Set `EXPO_PUBLIC_SERVER_URL` (mobile) and `CORS_ORIGIN` (server) to the server's LAN IP address (e.g. `http://192.168.1.10:4000`).
+- Confirm the server is running and reachable (`curl http://<server-ip>:4000/health`).
+
+**Answers mix content from previous questions**
+- Each new question cancels the in-flight fetch request (`AbortController`) before starting a fresh SSE stream, so stale content should not appear. If you see mixing, tap/click **Clear** to reset the answer panel.

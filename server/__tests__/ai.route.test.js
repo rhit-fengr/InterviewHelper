@@ -61,4 +61,23 @@ describe('AI answer streaming route', () => {
 
     errorSpy.mockRestore();
   });
+
+  it('streams a rate-limit error message when OpenAI returns HTTP 429', async () => {
+    const rateLimitErr = Object.assign(new Error('Rate limit exceeded'), { status: 429 });
+    generateAnswer.mockRejectedValue(rateLimitErr);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await request(app)
+      .post('/api/ai/answer')
+      .send({ question: 'Tell me about yourself' });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('data: {"error":"Rate limit reached. Please wait a moment and try again."}\n\n');
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[AI answer] stream init error:',
+      expect.any(Error)
+    );
+
+    errorSpy.mockRestore();
+  });
 });

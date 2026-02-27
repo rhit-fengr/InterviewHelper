@@ -31,7 +31,10 @@ router.post('/answer', async (req, res) => {
     stream = await generateAnswer({ question, personalInfo, answerSettings, setup, conversationHistory });
   } catch (err) {
     console.error('[AI answer] stream init error:', err);
-    res.write(`data: ${JSON.stringify({ error: 'Failed to start answer generation' })}\n\n`);
+    const userMessage = err?.status === 429
+      ? 'Rate limit reached. Please wait a moment and try again.'
+      : 'Failed to start answer generation';
+    res.write(`data: ${JSON.stringify({ error: userMessage })}\n\n`);
     res.end();
     return;
   }

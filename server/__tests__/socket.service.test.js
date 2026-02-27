@@ -197,6 +197,52 @@ describe('socket.service integration', () => {
     mobile.disconnect();
   });
 
+  it('does not prune expired sessions on high-frequency stream events', async () => {
+    const original = process.env.SESSION_TTL_MS;
+    process.env.SESSION_TTL_MS = '10';
+
+    await new Promise((resolve) => ioServer.close(resolve));
+    await new Promise((resolve) => httpServer.close(resolve));
+
+    httpServer = http.createServer();
+    ioServer = initSocketServer(httpServer);
+    await new Promise((resolve) => {
+      httpServer.listen(0, '127.0.0.1', resolve);
+    });
+    const { port } = httpServer.address();
+    baseUrl = `http://127.0.0.1:${port}`;
+
+    const host = await connectClient(baseUrl);
+    const mobile = await connectClient(baseUrl);
+
+    const createdPromise = waitForEvent(host, 'session-created');
+    host.emit('create-session', { sessionCode: 'IRON-1234' });
+    await createdPromise;
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    host.emit('stream-answer', { sessionCode: 'IRON-1234', chunk: 'late', isDone: false });
+    await expectNoEvent(host, 'session-error');
+
+    const hostExpiredPromise = waitForEvent(host, 'session-error');
+    const mobileExpiredPromise = waitForEvent(mobile, 'session-error');
+    mobile.emit('join-session', { sessionCode: 'IRON-1234' });
+
+    const [{ message: hostMessage }] = await hostExpiredPromise;
+    const [{ message: mobileMessage }] = await mobileExpiredPromise;
+    expect(hostMessage).toMatch(/session expired/i);
+    expect(mobileMessage).toMatch(/session expired|session not found/i);
+
+    host.disconnect();
+    mobile.disconnect();
+
+    if (original === undefined) {
+      delete process.env.SESSION_TTL_MS;
+    } else {
+      process.env.SESSION_TTL_MS = original;
+    }
+  });
+
   it('expires sessions when ttl elapses before mobile joins', async () => {
     const original = process.env.SESSION_TTL_MS;
     process.env.SESSION_TTL_MS = '10';

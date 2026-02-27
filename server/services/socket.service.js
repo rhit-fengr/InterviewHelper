@@ -68,7 +68,6 @@ function initSocketServer(httpServer) {
   sessions.clear();
   socketToSession.clear();
   const sessionTtlMs = getSessionTtlMs();
-
   const io = new Server(httpServer, {
     cors: { origin: parseCorsOrigin(process.env.CORS_ORIGIN) },
   });
@@ -141,11 +140,10 @@ function initSocketServer(httpServer) {
 
     // Desktop streams answer chunk (delta) to mobile
     socket.on('stream-answer', (payload = {}) => {
-      pruneExpiredSessions(sessionTtlMs);
-
       const sessionCode = normalizeSessionCode(payload.sessionCode);
       const { chunk, isDone } = payload;
       if (!isValidSessionCode(sessionCode)) return;
+
       const session = sessions.get(sessionCode);
       if (session?.hostSocket === socket && session.clientSocket) {
         session.clientSocket.emit('answer-chunk', { chunk, isDone });
@@ -154,11 +152,10 @@ function initSocketServer(httpServer) {
 
     // Desktop streams transcript update to mobile
     socket.on('transcript-update', (payload = {}) => {
-      pruneExpiredSessions(sessionTtlMs);
-
       const sessionCode = normalizeSessionCode(payload.sessionCode);
       const { transcript } = payload;
       if (!isValidSessionCode(sessionCode)) return;
+
       const session = sessions.get(sessionCode);
       if (session?.hostSocket === socket && session.clientSocket) {
         session.clientSocket.emit('transcript-update', { transcript });

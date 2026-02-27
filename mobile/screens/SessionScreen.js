@@ -94,10 +94,10 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
   };
 
   const statusDotStyle =
-    sessionStatus === 'joined'
-      ? styles.dotConnected
-      : sessionStatus === 'error'
+    sessionStatus === 'error'
       ? styles.dotError
+      : sessionStatus === 'joined' && isConnected
+      ? styles.dotConnected
       : styles.dotWaiting;
 
   return (

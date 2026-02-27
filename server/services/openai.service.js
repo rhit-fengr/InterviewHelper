@@ -12,7 +12,11 @@ if (!isConfigured) {
   console.warn('[openai.service] WARNING: OPENAI_API_KEY is not set. AI endpoints will return 503 until configured.');
 }
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'placeholder' });
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY || 'placeholder',
+  maxRetries: 3,
+  timeout: 30 * 1000, // 30 seconds per attempt (up to 3 attempts with backoff)
+});
 
 const TOKEN_LIMITS = {
   short: 200,

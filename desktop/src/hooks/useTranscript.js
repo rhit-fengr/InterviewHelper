@@ -50,7 +50,12 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     recognition.interimResults = true;
     recognition.lang = language;
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => {
+      setIsListening(true);
+      // Clear any previous error so stale messages don't persist after a
+      // successful restart (e.g. after the user grants microphone permission).
+      setError(null);
+    };
     recognition.onend = () => {
       setIsListening(false);
       // Read the ref — not the closed-over value — to decide whether to restart.
@@ -95,7 +100,11 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     };
   }, [enabled, language]);
 
-  const clearTranscript = () => setTranscript('');
+  const clearTranscript = () => {
+    // Reset the de-dupe ref so subsequent Web Speech results are not skipped.
+    lastTranscriptRef.current = '';
+    setTranscript('');
+  };
 
   return { transcript, isListening, error, clearTranscript };
 }

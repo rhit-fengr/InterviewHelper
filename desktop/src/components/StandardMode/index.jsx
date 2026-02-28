@@ -8,6 +8,7 @@ import {
   extractManualQuestionFromTranscript,
   guessSpeakerLabel,
 } from '../../utils/interviewTranscript';
+import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnswer';
 import './StandardMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
@@ -19,11 +20,15 @@ export default function StandardMode({ onBack }) {
   const [conversationHistory, setConversationHistory] = useState([]);
   const [lastQuestion, setLastQuestion] = useState('');
   const [transcriptEntries, setTranscriptEntries] = useState([]);
+  const [historyView, setHistoryView] = useState('expanded');
   const detectionTimeoutRef = useRef(null);
+  const transcriptScrollRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
+  const lastAutoAnswerRef = useRef(null);
   // Track the in-flight question so we can save user+assistant pair when generation completes
   const pendingQuestionRef = useRef(null);
   const prevIsLoadingRef = useRef(false);
+  const isLoadingRef = useRef(false);
 
   // Keep latest values in refs so callbacks are stable and don't go stale
   const sessionRef = useRef(session);
@@ -38,6 +43,7 @@ export default function StandardMode({ onBack }) {
   useEffect(() => { conversationHistoryRef.current = conversationHistory; }, [conversationHistory]);
 
   const { answer, isLoading, error: aiError, generateAnswer, cancelGeneration, clearAnswer } = useAIAnswer();
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   const languageLabelByValue = useRef(
     Object.fromEntries(LANGUAGES.map((l) => [l.value, l.label]))
@@ -70,11 +76,24 @@ export default function StandardMode({ onBack }) {
         }),
       });
       const data = await res.json();
-      if (data.isQuestion && data.question) {
-        lastDetectedAtRef.current = Date.now();
-        setLastQuestion(data.question);
-        triggerAnswerGeneration(data.question);
+      const detectedQuestion = typeof data.question === 'string' ? data.question.trim() : '';
+      if (!data.isQuestion || !detectedQuestion) return;
+      if (shouldSkipAutoAnswer({
+        question: detectedQuestion,
+        lastAuto: lastAutoAnswerRef.current,
+        pendingQuestion: pendingQuestionRef.current,
+        isLoading: isLoadingRef.current,
+      })) {
+        return;
       }
+
+      lastDetectedAtRef.current = Date.now();
+      lastAutoAnswerRef.current = {
+        key: normalizeQuestionKey(detectedQuestion),
+        at: Date.now(),
+      };
+      setLastQuestion(detectedQuestion);
+      triggerAnswerGeneration(detectedQuestion);
     } catch {
       // Network error — skip detection
     }
@@ -142,17 +161,24 @@ export default function StandardMode({ onBack }) {
       clearTimeout(detectionTimeoutRef.current);
       setIsRunning(false);
       cancelGeneration();
+      pendingQuestionRef.current = null;
     } else {
       setIsRunning(true);
       clearAnswer();
       clearTranscript();
       setTranscriptEntries([]);
+      lastAutoAnswerRef.current = null;
     }
   };
 
   useEffect(() => {
     return () => clearTimeout(detectionTimeoutRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!transcriptScrollRef.current) return;
+    transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
+  }, [transcriptEntries, transcript]);
 
   // Save completed conversation turn (user question + assistant answer) to history
   useEffect(() => {
@@ -230,6 +256,7 @@ export default function StandardMode({ onBack }) {
             onClick={() => {
               cancelGeneration();
               pendingQuestionRef.current = null;
+              lastAutoAnswerRef.current = null;
               clearTimeout(detectionTimeoutRef.current);
               detectionTimeoutRef.current = null;
               clearAnswer();
@@ -252,7 +279,7 @@ export default function StandardMode({ onBack }) {
         <div className="error-box">⚠️ {transcriptError || aiError}</div>
       )}
 
-      {session.showTranscript && transcript && (
+      {session.showTranscript && (isRunning || transcript) && (
         <div className="transcript-box">
           <div className="box-label-row">
             <span className="box-label">🎤 Transcript</span>
@@ -262,21 +289,25 @@ export default function StandardMode({ onBack }) {
             </span>
           </div>
 
-          {transcriptEntries.length > 0 ? (
-            <div className="transcript-entry-list">
-              {transcriptEntries.slice(-20).map((entry, idx) => (
-                <div key={`${entry.timestamp}-${idx}`} className="transcript-entry">
-                  <span className={`speaker-tag speaker-${entry.speaker.toLowerCase()}`}>
-                    {entry.speaker}
-                  </span>
-                  <span className="entry-language-tag">{entry.language}</span>
-                  <span className="entry-text">{entry.text}</span>
-                </div>
-              ))}
+          <div className="transcript-scroll" ref={transcriptScrollRef}>
+            {transcriptEntries.length > 0 && (
+              <div className="transcript-entry-list">
+                {transcriptEntries.slice(-150).map((entry, idx) => (
+                  <div key={`${entry.timestamp}-${idx}`} className="transcript-entry">
+                    <span className={`speaker-tag speaker-${entry.speaker.toLowerCase()}`}>
+                      {entry.speaker}
+                    </span>
+                    <span className="entry-language-tag">{entry.language}</span>
+                    <span className="entry-text">{entry.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="transcript-raw-block">
+              <span className="raw-transcript-label">Live Combined Transcript</span>
+              <p className="transcript-text">{transcript || (isRunning ? 'Listening...' : 'No transcript yet.')}</p>
             </div>
-          ) : (
-            <p className="transcript-text">{transcript}</p>
-          )}
+          </div>
         </div>
       )}
 
@@ -294,10 +325,11 @@ export default function StandardMode({ onBack }) {
         </div>
       )}
 
-      {!session.autoAnswer && isRunning && transcript.trim() && (
+      {isRunning && transcript.trim() && (
         <div className="control-bar">
           <button className="btn-answer-wide" onClick={handleManualAnswer} disabled={isLoading}>
             💡 Answer Current Transcript
+            {session.autoAnswer ? ' (Manual Retry)' : ''}
           </button>
         </div>
       )}
@@ -327,17 +359,45 @@ export default function StandardMode({ onBack }) {
         <div className="history-section">
           <div className="history-header">
             <span className="box-label">📋 Conversation History</span>
+            <div className="history-actions">
+              {historyView !== 'hidden' && (
+                <button
+                  className="btn-history-action"
+                  onClick={() => setHistoryView((prev) => (prev === 'expanded' ? 'collapsed' : 'expanded'))}
+                >
+                  {historyView === 'expanded' ? 'Collapse' : 'Expand'}
+                </button>
+              )}
+              <button
+                className="btn-history-action"
+                onClick={() => setHistoryView((prev) => (prev === 'hidden' ? 'expanded' : 'hidden'))}
+              >
+                {historyView === 'hidden' ? 'Show' : 'Hide'}
+              </button>
+            </div>
           </div>
-          <div className="history-list">
-            {completedTurns.map((turn, idx) => (
-              <div key={idx} className="history-turn">
-                <div className="history-question">Q: {turn.question}</div>
-                <div className="history-answer" style={{ fontSize: `${displaySettings.fontSize}px` }}>
-                  A: {turn.answer}
+          {historyView === 'expanded' && (
+            <div className="history-list">
+              {completedTurns.map((turn, idx) => (
+                <div key={idx} className="history-turn">
+                  <div className="history-question">Q: {turn.question}</div>
+                  <div className="history-answer" style={{ fontSize: `${displaySettings.fontSize}px` }}>
+                    A: {turn.answer}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
+          {historyView === 'collapsed' && (
+            <div className="history-collapsed-note">
+              {completedTurns.length} turn(s) kept in memory and will still be included in export.
+            </div>
+          )}
+          {historyView === 'hidden' && (
+            <div className="history-collapsed-note">
+              History panel hidden. {completedTurns.length} turn(s) are still retained for context and export.
+            </div>
+          )}
         </div>
       )}
 

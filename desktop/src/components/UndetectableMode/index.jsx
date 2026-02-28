@@ -4,6 +4,7 @@ import { useSocketSync } from '../../hooks/useSocketSync';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
 import { useTranscript } from '../../hooks/useTranscript';
 import { guessSpeakerLabel } from '../../utils/interviewTranscript';
+import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnswer';
 import './UndetectableMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
@@ -50,11 +51,15 @@ export default function UndetectableMode({ onBack }) {
   // Debounce ref for question detection
   const detectionTimeoutRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
+  const lastAutoAnswerRef = useRef(null);
   // Track the in-flight question so we can save user+assistant pair when generation completes
   const pendingQuestionRef = useRef(null);
   const prevIsLoadingRef = useRef(false);
+  const isLoadingRef = useRef(false);
   // Track how many characters of the current answer have already been streamed
   const lastStreamedLengthRef = useRef(0);
+
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   const triggerAnswerGeneration = useCallback(async (question) => {
     pendingQuestionRef.current = question;
@@ -82,10 +87,23 @@ export default function UndetectableMode({ onBack }) {
         }),
       });
       const data = await res.json();
-      if (data.isQuestion && data.question) {
-        lastDetectedAtRef.current = Date.now();
-        triggerAnswerGeneration(data.question);
+      const detectedQuestion = typeof data.question === 'string' ? data.question.trim() : '';
+      if (!data.isQuestion || !detectedQuestion) return;
+      if (shouldSkipAutoAnswer({
+        question: detectedQuestion,
+        lastAuto: lastAutoAnswerRef.current,
+        pendingQuestion: pendingQuestionRef.current,
+        isLoading: isLoadingRef.current,
+      })) {
+        return;
       }
+
+      lastDetectedAtRef.current = Date.now();
+      lastAutoAnswerRef.current = {
+        key: normalizeQuestionKey(detectedQuestion),
+        at: Date.now(),
+      };
+      triggerAnswerGeneration(detectedQuestion);
     } catch {
       // Network error — skip detection
     }
@@ -145,7 +163,15 @@ export default function UndetectableMode({ onBack }) {
   }, [answer, isLoading, clientConnected, sessionCode, streamAnswerChunk]);
 
   const handleStartStop = () => {
-    setIsRunning((prev) => !prev);
+    setIsRunning((prev) => {
+      const next = !prev;
+      if (!next) {
+        pendingQuestionRef.current = null;
+      } else {
+        lastAutoAnswerRef.current = null;
+      }
+      return next;
+    });
     clearTimeout(detectionTimeoutRef.current);
   };
 

@@ -52,7 +52,11 @@ export default function StandardMode({ onBack }) {
       const res = await fetch(`${SERVER_URL}/api/ai/detect-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: text, sensitivity: answerSettingsRef.current.detectionSensitivity }),
+        body: JSON.stringify({
+          transcript: text,
+          sensitivity: answerSettingsRef.current.detectionSensitivity,
+          provider: setupRef.current.aiProvider,
+        }),
       });
       const data = await res.json();
       if (data.isQuestion && data.question) {

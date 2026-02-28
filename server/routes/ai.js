@@ -1,18 +1,36 @@
 'use strict';
 
 const express = require('express');
-const { generateAnswer, detectQuestion, isConfigured } = require('../services/openai.service');
+const {
+  generateAnswer,
+  detectQuestion,
+  normalizeProvider,
+  isProviderConfigured,
+} = require('../services/openai.service');
 
 const router = express.Router();
 
+function getProviderFromRequest(req) {
+  return normalizeProvider(
+    req.body?.provider ||
+    req.body?.setup?.aiProvider ||
+    process.env.AI_PROVIDER ||
+    'openai'
+  );
+}
+
 /**
  * POST /api/ai/answer
- * Body: { question, personalInfo, answerSettings, setup, conversationHistory }
+ * Body: { question, personalInfo, answerSettings, setup, conversationHistory, provider? }
  * Response: Server-Sent Events stream of answer chunks (JSON-encoded)
  */
 router.post('/answer', async (req, res) => {
-  if (!isConfigured) {
-    return res.status(503).json({ error: 'AI service is not configured. Set OPENAI_API_KEY.' });
+  const provider = getProviderFromRequest(req);
+  if (!isProviderConfigured(provider)) {
+    const keyHint = provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY';
+    return res.status(503).json({
+      error: `AI service (${provider}) is not configured. Set ${keyHint}.`,
+    });
   }
 
   const { question, personalInfo, answerSettings, setup, conversationHistory } = req.body;
@@ -28,7 +46,14 @@ router.post('/answer', async (req, res) => {
 
   let stream;
   try {
-    stream = await generateAnswer({ question, personalInfo, answerSettings, setup, conversationHistory });
+    stream = await generateAnswer({
+      provider,
+      question,
+      personalInfo,
+      answerSettings,
+      setup,
+      conversationHistory,
+    });
   } catch (err) {
     console.error('[AI answer] stream init error:', err);
     const userMessage = err?.status === 429
@@ -39,7 +64,6 @@ router.post('/answer', async (req, res) => {
     return;
   }
 
-  // Cancel the OpenAI stream when the client disconnects
   req.on('close', () => {
     try { stream.controller?.abort(); } catch { /* ignore */ }
   });
@@ -49,7 +73,6 @@ router.post('/answer', async (req, res) => {
       if (res.writableEnded) break;
       const text = chunk.choices[0]?.delta?.content || '';
       if (text) {
-        // JSON-encode so embedded newlines don't break SSE framing
         res.write(`data: ${JSON.stringify({ text })}\n\n`);
       }
     }
@@ -68,12 +91,16 @@ router.post('/answer', async (req, res) => {
 
 /**
  * POST /api/ai/detect-question
- * Body: { transcript, sensitivity }
+ * Body: { transcript, sensitivity, provider? }
  * Response: { isQuestion, question }
  */
 router.post('/detect-question', async (req, res) => {
-  if (!isConfigured) {
-    return res.status(503).json({ error: 'AI service is not configured. Set OPENAI_API_KEY.' });
+  const provider = getProviderFromRequest(req);
+  if (!isProviderConfigured(provider)) {
+    const keyHint = provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY';
+    return res.status(503).json({
+      error: `AI service (${provider}) is not configured. Set ${keyHint}.`,
+    });
   }
 
   const { transcript, sensitivity } = req.body;
@@ -83,7 +110,7 @@ router.post('/detect-question', async (req, res) => {
   }
 
   try {
-    const result = await detectQuestion(transcript, sensitivity);
+    const result = await detectQuestion(transcript, sensitivity, provider);
     res.json(result);
   } catch (err) {
     console.error('[AI detect-question] error:', err);

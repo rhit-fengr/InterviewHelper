@@ -30,7 +30,14 @@ export function useAIAnswer() {
       const response = await fetch(`${SERVER_URL}/api/ai/answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, personalInfo, answerSettings, setup, conversationHistory }),
+        body: JSON.stringify({
+          provider: setup?.aiProvider,
+          question,
+          personalInfo,
+          answerSettings,
+          setup,
+          conversationHistory,
+        }),
         signal: controller.signal,
       });
 

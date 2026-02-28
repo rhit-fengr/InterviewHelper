@@ -1,6 +1,11 @@
 'use strict';
 
-const { buildSystemPrompt, isConfigured } = require('../services/openai.service');
+const {
+  buildSystemPrompt,
+  isConfigured,
+  normalizeProvider,
+  isProviderConfigured,
+} = require('../services/openai.service');
 
 describe('buildSystemPrompt', () => {
   it('includes candidate name', () => {
@@ -30,5 +35,16 @@ describe('isConfigured', () => {
   it('is false when OPENAI_API_KEY env var is not set', () => {
     // Tests run without the env var, so the service should report unconfigured
     expect(isConfigured).toBe(false);
+  });
+});
+
+describe('provider helpers', () => {
+  it('normalizes unknown provider to default openai', () => {
+    expect(normalizeProvider('unknown-provider')).toBe('openai');
+    expect(normalizeProvider('gemini')).toBe('gemini');
+  });
+
+  it('reports gemini provider as unconfigured when GEMINI_API_KEY is not set', () => {
+    expect(isProviderConfigured('gemini')).toBe(false);
   });
 });

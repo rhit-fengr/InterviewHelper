@@ -3,13 +3,18 @@
 jest.mock('../services/openai.service', () => ({
   generateAnswer: jest.fn(),
   detectQuestion: jest.fn(),
-  isConfigured: true,
+  normalizeProvider: jest.fn((provider) => provider || 'openai'),
+  isProviderConfigured: jest.fn(() => true),
 }));
 
 const express = require('express');
 const request = require('supertest');
 const aiRouter = require('../routes/ai');
-const { generateAnswer } = require('../services/openai.service');
+const {
+  generateAnswer,
+  isProviderConfigured,
+  normalizeProvider,
+} = require('../services/openai.service');
 
 describe('AI answer streaming route', () => {
   let app;
@@ -22,6 +27,8 @@ describe('AI answer streaming route', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    isProviderConfigured.mockReturnValue(true);
+    normalizeProvider.mockImplementation((provider) => provider || 'openai');
   });
 
   it('streams answer chunks and terminates with done event', async () => {
@@ -79,5 +86,19 @@ describe('AI answer streaming route', () => {
     );
 
     errorSpy.mockRestore();
+  });
+
+  it('returns 503 with key hint when selected provider is not configured', async () => {
+    normalizeProvider.mockReturnValue('gemini');
+    isProviderConfigured.mockReturnValue(false);
+
+    const res = await request(app)
+      .post('/api/ai/answer')
+      .send({ question: 'Tell me about yourself', provider: 'gemini' });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('gemini');
+    expect(res.body.error).toContain('GEMINI_API_KEY');
+    expect(generateAnswer).not.toHaveBeenCalled();
   });
 });

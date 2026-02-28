@@ -1,13 +1,13 @@
 # InterviewHelper
 
-An AI-powered interview assistant desktop application that provides real-time answer generation during interviews. Built with Electron, React, Node.js, and OpenAI GPT-4o.
+An AI-powered interview assistant desktop application that provides real-time answer generation during interviews. Built with Electron, React, Node.js, and provider-flexible AI backends (OpenAI or Google Gemini).
 
 ---
 
 ## Features
 
 - **Live Transcript** — Real-time speech-to-text via Web Speech API
-- **AI Answer Generation** — Streaming answers powered by GPT-4o, personalised with your resume and background
+- **AI Answer Generation** — Streaming answers powered by OpenAI or Google Gemini, personalised with your resume and background
 - **Standard Mode** — Overlay window with screen-capture protection
 - **Undetectable Mode** — Desktop stays hidden; answers stream to your phone via a session code
 - **Configurable Settings** — STAR/CAR/PAR/SOAR structure, response style, answer length, detection sensitivity
@@ -65,14 +65,14 @@ interview-hammer/
 ### Prerequisites
 
 - Node.js 18+
-- An [OpenAI API key](https://platform.openai.com/api-keys)
+- An [OpenAI API key](https://platform.openai.com/api-keys) or a [Google Gemini API key](https://ai.google.dev/gemini-api/docs/api-key)
 - **Chrome or Chromium-based browser / Electron** — Web Speech API is only available in Chromium. The desktop app runs inside Electron (which bundles Chromium), so speech recognition works out of the box. If you open the React app in Firefox or Safari without Electron, the `useTranscript` hook will display an error and disable the mic button.
 
 ### 1. Start the server
 
 ```bash
 cd server
-cp .env.example .env          # Fill in OPENAI_API_KEY
+cp .env.example .env          # Set AI_PROVIDER + matching API key
 npm install
 npm run dev
 ```
@@ -109,6 +109,7 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 
 | Field | Description |
 |---|---|
+| AI Provider | `OpenAI` or `Google Gemini` |
 | Topic | Interview category (Software Engineering, Behavioral, etc.) |
 | Interview Language | Language the interviewer speaks |
 | Answer Language | Language for AI-generated answers |
@@ -150,14 +151,14 @@ Every answer request builds a personalised system prompt that includes:
 - **Candidate profile** — name, current role, company, years of experience, skills, work history, education.
 - **Answer structure** — the chosen behavioral framework (STAR / CAR / PAR / SOAR).
 - **Style & length** — conversational, structured, concise, or detailed; token budget maps to short (~200 tokens), medium (~500 tokens), or long (~1,000 tokens).
-- **Answer language** — instructs GPT-4o to reply in the chosen language.
+- **Answer language** — instructs the selected model provider to reply in the chosen language.
 - **Additional context** — anything you add in the *Additional Instructions* field.
 
 The model is told to respond naturally as the candidate (no "As an AI…" preamble).
 
 ### Detection Sensitivity
 
-Detection Sensitivity controls how aggressively `POST /api/ai/detect-question` classifies incoming transcript text as an interview question. The setting maps to a natural-language instruction sent to `gpt-4o-mini`:
+Detection Sensitivity controls how aggressively `POST /api/ai/detect-question` classifies incoming transcript text as an interview question. The setting maps to a natural-language instruction sent to the selected provider's detection model:
 
 | Level | Behaviour |
 |---|---|
@@ -171,12 +172,12 @@ The result is `{ isQuestion: boolean, question: string | null }`. If `isQuestion
 
 ## Error Handling
 
-### OpenAI API
+### AI Provider API
 
 | Situation | What happens |
 |---|---|
-| `OPENAI_API_KEY` not set | Server starts with a warning; `/api/ai/*` routes return `503` immediately. |
-| Network error / timeout | The OpenAI client is configured with a **30-second timeout** and **3 automatic retries** (with exponential back-off). If all retries fail the SSE stream sends `{"error":"Failed to start answer generation"}` and closes. |
+| Provider key not set | Server starts with a warning; `/api/ai/*` routes return `503` with provider-specific key hint (`OPENAI_API_KEY` or `GEMINI_API_KEY`). |
+| Network error / timeout | The AI client is configured with a **30-second timeout** and **3 automatic retries** (with exponential back-off). If all retries fail the SSE stream sends `{"error":"Failed to start answer generation"}` and closes. |
 | Rate limit (HTTP 429) | Caught as a distinct error class; the SSE stream sends `{"error":"Rate limit reached. Please wait a moment and try again."}` so the user sees an actionable message instead of a generic failure. |
 | Streaming error mid-response | Caught in the `for await` loop; sends `{"error":"Answer generation failed"}` and closes the stream. |
 
@@ -266,7 +267,7 @@ Output is in `desktop/out/`.
 | State | Zustand (persisted) |
 | Backend | Node.js, Express |
 | Real-time | Socket.io |
-| AI | OpenAI GPT-4o (streaming) |
+| AI | OpenAI / Google Gemini (streaming via OpenAI-compatible API) |
 | Payments | Stripe |
 | Mobile | React Native (Expo) |
 
@@ -286,11 +287,13 @@ Output is in `desktop/out/`.
 
 **"Failed to fetch" or "Cannot connect to server" error**
 - The backend server is not running. Start it with `cd server && npm run dev`.
-- Make sure `server/.env` exists and `OPENAI_API_KEY` is set (copy from `.env.example`).
+- Make sure `server/.env` exists and the selected provider key is set (`OPENAI_API_KEY` or `GEMINI_API_KEY`).
 - If the desktop React app is served on a different port/host than the default `http://localhost:4000`, update `REACT_APP_SERVER_URL` in `desktop/.env.local`.
 
 **"AI service is not configured" error**
-- The `OPENAI_API_KEY` environment variable is missing or empty in `server/.env`. Add a valid key and restart the server.
+- The selected provider key is missing in `server/.env`.
+- If `AI_PROVIDER=openai`, set `OPENAI_API_KEY`.
+- If `AI_PROVIDER=gemini`, set `GEMINI_API_KEY`.
 
 **Microphone permission denied ("Microphone access denied" error)**
 - Click the camera/microphone icon in your browser's address bar and allow microphone access for this page.

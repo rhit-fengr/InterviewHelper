@@ -6,6 +6,7 @@ export const useInterviewStore = create(
     (set) => ({
       // ── Interview Setup ──────────────────────────────────────────────────
       setup: {
+        aiProvider: 'openai',
         topic: 'software-engineering',
         interviewLang: 'en-US',
         answerLang: 'en-US',

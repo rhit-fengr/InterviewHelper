@@ -14,6 +14,11 @@ export const TOPICS = [
   { value: 'general', label: 'General' },
 ];
 
+export const AI_PROVIDERS = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'gemini', label: 'Google Gemini' },
+];
+
 export const LANGUAGES = [
   { value: 'en-US', label: 'English (US)' },
   { value: 'en-GB', label: 'English (UK)' },

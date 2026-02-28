@@ -1,10 +1,19 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
-import { TOPICS, LANGUAGES } from '../../constants';
+import { AI_PROVIDERS, TOPICS, LANGUAGES } from '../../constants';
 import './InterviewSetup.css';
 
 export default function InterviewSetup({ onStart }) {
   const { setup, updateSetup } = useInterviewStore();
+  const selectedProvider = setup.aiProvider || 'openai';
+
+  useEffect(() => {
+    if (!setup.aiProvider) {
+      updateSetup({ aiProvider: 'openai' });
+    }
+    // Run this effect only once on mount to avoid unnecessary re-renders
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleChange = (field) => (e) => updateSetup({ [field]: e.target.value });
 
@@ -12,6 +21,15 @@ export default function InterviewSetup({ onStart }) {
     <div className="setup-panel">
       <h2 className="setup-title">Interview Setup</h2>
       <p className="setup-subtitle">Configure your interview preferences below.</p>
+
+      <div className="form-group">
+        <label className="form-label">AI Provider</label>
+        <select className="form-select" value={selectedProvider} onChange={handleChange('aiProvider')}>
+          {AI_PROVIDERS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="form-group">
         <label className="form-label">Topic</label>

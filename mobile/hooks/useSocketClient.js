@@ -80,6 +80,7 @@ export function useSocketClient({
 
     socket.on('transcript-update', (payload = {}) => {
       let transcript = '';
+      let metadata = {};
       if (typeof payload === 'string') {
         transcript = payload;
       } else if (
@@ -88,18 +89,14 @@ export function useSocketClient({
         typeof payload.transcript === 'string'
       ) {
         transcript = payload.transcript;
+        metadata = payload;
       }
       if (!transcript) return;
 
       const callback = onTranscriptUpdateRef.current;
       if (!callback) return;
 
-      // Backward-compatible: callbacks expecting one arg keep receiving only text.
-      if (callback.length >= 2) {
-        callback(transcript, payload);
-      } else {
-        callback(transcript);
-      }
+      callback(transcript, metadata);
     });
 
     socket.on('host-disconnected', () => {

@@ -6,11 +6,12 @@ An AI-powered interview assistant desktop application that provides real-time an
 
 ## Features
 
-- **Live Transcript** — Real-time speech-to-text via Web Speech API
+- **Live Transcript** — Real-time speech-to-text via Web Speech API, resizable transcript panel, and auto-scroll to the latest line
 - **AI Answer Generation** — Streaming answers powered by OpenAI or Google Gemini, personalised with your resume and background
 - **Standard Mode** — Overlay window with screen-capture protection
 - **Undetectable Mode** — Desktop stays hidden; answers stream to your phone via a session code
 - **Configurable Settings** — STAR/CAR/PAR/SOAR structure, response style, answer length, detection sensitivity
+- **Conversation Context Controls** — Conversation history panel can be expanded, collapsed, or hidden without affecting export/context memory
 - **Cross-Platform** — Windows and macOS via Electron
 
 ---
@@ -128,8 +129,10 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 
 | Setting | Description |
 |---|---|
-| Hide from Screen Sharing | Uses `setContentProtection` (macOS) to prevent capture |
-| Hide App Icon | Removes app from taskbar/dock |
+| Hide from Screen Sharing | Uses `setContentProtection` (macOS) to prevent capture (Electron runtime only) |
+| Hide App Icon | Removes app from taskbar/dock (Electron runtime only) |
+
+If you run only the web preview (`localhost:3000`) without Electron, desktop-only controls (opacity / always-on-top / hide-from-screen-sharing / hide-app-icon) are intentionally shown as disabled to avoid false expectations.
 
 ---
 
@@ -170,6 +173,16 @@ Detection Sensitivity controls how aggressively `POST /api/ai/detect-question` c
 | **High** | Triggers on explicit questions, implicit questions, and subtle prompts like "tell me about…" or "walk me through…". |
 
 The result is `{ isQuestion: boolean, question: string | null }`. If `isQuestion` is `true` the extracted question is sent to `POST /api/ai/answer` for streaming generation.
+
+### Duplicate Auto-Answer Guard
+
+To avoid duplicated answers from repeated detection callbacks, both Standard and Undetectable mode apply question deduplication before auto-triggering generation:
+
+- Normalizes question text (`case`, punctuation, repeated spaces) into a stable key.
+- Skips retrigger if the same normalized question is already in-flight.
+- Skips retrigger if the same normalized question was auto-answered within a short cooldown window.
+
+Manual `Answer Current Transcript` remains available even when `Auto Answer` is ON, so you can force a retry when needed.
 
 ---
 
@@ -259,6 +272,20 @@ npm run build     # Builds React app + packages with electron-builder
 
 Output is in `desktop/out/`.
 
+Windows-specific release helpers:
+
+```bash
+cd desktop
+npm run build:win             # NSIS installer (.exe)
+npm run build:win:unsigned    # NSIS installer without sign/edit (dev fallback)
+npm run build:win:portable    # Portable .exe
+npm run release:win:unsigned  # Build + hashes (unsigned smoke)
+npm run release:win           # Build + hashes + signature verification
+```
+
+Detailed signing and installer acceptance checklist:
+- `desktop/RELEASE_WINDOWS.md`
+
 ---
 
 ## Tech Stack
@@ -287,6 +314,10 @@ Output is in `desktop/out/`.
 - Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.
 - If Chrome performance is a concern, try Microsoft Edge — the app is fully supported in both browsers.
 - Running the app as a packaged Electron app (`npm run build`) instead of in the browser dev server also reduces overhead.
+
+**Why are some settings disabled in localhost web preview?**
+- `Window Opacity`, `Always On Top`, `Hide from Screen Sharing`, and `Hide App Icon` require Electron APIs and are disabled in pure web preview mode by design.
+- Use `npm start` in `desktop/` (which launches Electron after the dev server) or a packaged build to validate those settings end-to-end.
 
 **"Failed to fetch" or "Cannot connect to server" error**
 - The backend server is not running. Start it with `cd server && npm run dev`.
@@ -318,6 +349,10 @@ Output is in `desktop/out/`.
 **"Answer Current Transcript" appears to do nothing**
 - The manual answer button now sends the current transcript directly as a prompt (it no longer depends on question-detection heuristics).
 - Ensure transcript text is non-empty and microphone input is active.
+
+**Auto Answer occasionally generates duplicates**
+- The app now deduplicates repeated auto-detected questions within a cooldown window.
+- If you still need a fresh regeneration, click `Answer Current Transcript (Manual Retry)` to force a new answer.
 
 **Mobile app cannot connect**
 - Ensure the device is on the same network as the server.

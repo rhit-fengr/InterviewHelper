@@ -99,6 +99,18 @@ npm start
 
 ---
 
+### 用例 LT-04：Transcript 面板可拉伸 + 自动滚动到底部
+
+1. 进入 Standard Mode，保证 `Show Transcript = ON`，开始监听。
+2. 在 Transcript 面板右下角拖拽调整高度（上拉/下拉各一次）。
+3. 连续说 5~8 句，让 transcript 条目超过可视区域。
+
+预期：
+- Transcript 面板高度可通过拖拽改变。
+- 每次新语音片段进入时，滚动位置自动贴近最新一行（无需手动滚动）。
+
+---
+
 ## 2.2 AI Answer Generation（Streaming）
 
 ### 用例 AI-01：自动检测问题并流式回答
@@ -133,6 +145,28 @@ npm start
 
 预期：
 - 可直接触发回答生成（不依赖 detect-question 返回 true）。
+
+---
+
+### 用例 AI-02c：Auto Answer 开启时仍可手动补答/重试
+
+1. 开启 `Auto Answer`，开始监听并说一段可识别 transcript。
+2. 在自动回答进行中或结束后，点击 `💡 Answer Current Transcript (Manual Retry)`。
+
+预期：
+- 按钮在 `Auto Answer = ON` 时依然可见。
+- 点击后会基于当前 transcript 再发起一轮回答（用于漏检补救或重试）。
+
+---
+
+### 用例 AI-04：重复自动回答去重
+
+1. 开启 `Auto Answer`，说一个问题（例如 "Tell me about your biggest strength?"）。
+2. 在短时间内重复/停顿后再说同一问题，观察是否再次自动触发。
+
+预期：
+- 同一问题在短窗口内不会连续触发两次自动回答（避免重复生成）。
+- 如需强制再生成，可使用 `Answer Current Transcript` 手动触发。
 
 ---
 
@@ -171,6 +205,19 @@ npm start
 预期：
 - ON 时：窗口尽量不可被捕获（依赖平台能力，Windows/macOS表现可不同）。
 - OFF 时：窗口恢复可见/可捕获。
+
+---
+
+### 用例 SM-03：Conversation History 面板收缩/隐藏
+
+1. 在 Standard Mode 连续触发 2~3 轮问答，确保出现 `Conversation History`。
+2. 点击 `Collapse`，再点击 `Expand`。
+3. 点击 `Hide`，随后点击 `Show` 恢复。
+4. 隐藏状态下执行 `Export`。
+
+预期：
+- History 可在展开/收缩/隐藏之间切换，不影响主流程操作空间。
+- 即使 History 被隐藏，导出内容仍包含完整 Q&A 记录。
 
 ---
 
@@ -254,7 +301,9 @@ npm start
 4. 切换 `Hide App Icon`，观察任务栏/Dock 表现。
 
 预期：
-- 各开关与滑条即时生效，重启后保持已保存配置。
+- `Font Size` 可即时生效并持久化。
+- 若运行在 Electron：其余开关/滑条应生效并持久化。
+- 若运行在纯 web 预览（localhost）：Electron 专属项应显示为禁用，并有明确提示，不应出现“可点击但无效果”的假象。
 
 ---
 

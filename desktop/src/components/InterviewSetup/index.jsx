@@ -15,9 +15,7 @@ export default function InterviewSetup({ onStart }) {
     if (!setup.aiProvider) {
       updateSetup({ aiProvider: 'openai' });
     }
-    // Run this effect only once on mount to avoid unnecessary re-renders
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [setup.aiProvider, updateSetup]);
 
   const handleChange = (field) => (e) => updateSetup({ [field]: e.target.value });
 

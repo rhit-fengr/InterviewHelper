@@ -103,7 +103,7 @@ export default function UndetectableMode({ onBack }) {
 
   const { transcript } = useTranscript({
     enabled: isRunning,
-    language: setup.interviewLang,
+    language: Array.isArray(setup.interviewLangs) ? setup.interviewLangs : [setup.interviewLang || 'en-US'],
     onTranscriptChange: handleTranscriptUpdate,
   });
 

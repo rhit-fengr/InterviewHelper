@@ -1,12 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { normalizeRecognitionLanguages } from '../utils/interviewTranscript';
 
 /**
  * useTranscript — live speech-to-text via Web Speech API.
  *
+ * Supports either a single BCP-47 language tag or a language list.
+ * For multi-language mode, recognition auto-rotates between selected languages
+ * when no finalized speech has been detected for `rotationIntervalMs`.
+ *
  * @param {object} options
- * @param {boolean} options.enabled   - Whether recognition is active
- * @param {string|string[]}  options.language  - BCP-47 language tag (e.g. "en-US") or array of tags
- * @param {(text: string) => void} options.onTranscriptChange - Called on every update
+ * @param {boolean} options.enabled
+ * @param {string|string[]} options.language
+ * @param {(text: string) => void} options.onTranscriptChange
+ * @param {(segment: { text: string, language: string, timestamp: number }) => void} options.onFinalSegment
+ * @param {number} options.rotationIntervalMs
  */
 const SPEECH_ERROR_MESSAGES = {
   'not-allowed': 'Microphone access denied. Please allow microphone access in your browser settings and try again.',
@@ -15,29 +22,76 @@ const SPEECH_ERROR_MESSAGES = {
   'service-not-allowed': 'Speech recognition service is not allowed. Please ensure you are using a supported browser (Chrome or Edge).',
 };
 
-export function useTranscript({ enabled = false, language = 'en-US', onTranscriptChange } = {}) {
-  // Support array of languages — use the first selected language for recognition
-  const primaryLanguage = Array.isArray(language) ? (language[0] || 'en-US') : (language || 'en-US');
+export function useTranscript({
+  enabled = false,
+  language = 'en-US',
+  onTranscriptChange,
+  onFinalSegment,
+  rotationIntervalMs = 8000,
+} = {}) {
+  const languages = normalizeRecognitionLanguages(language);
+  const languageKey = languages.join('|');
+
   const [transcript, setTranscript] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState(null);
+  const [activeLanguage, setActiveLanguage] = useState(languages[0]);
+
   const recognitionRef = useRef(null);
-  // Keep a stable ref to the latest enabled value so onend never closes over a stale copy.
   const enabledRef = useRef(enabled);
-  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
-  // Keep a stable ref to the callback so the recognition effect does not
-  // restart whenever the caller re-renders with a new function reference.
+  const languagesRef = useRef(languages);
+  const activeLanguageRef = useRef(languages[0]);
   const onChangeRef = useRef(onTranscriptChange);
-  useEffect(() => { onChangeRef.current = onTranscriptChange; }, [onTranscriptChange]);
-  // Track last emitted transcript to skip no-op updates (reduces re-renders in Chrome)
+  const onFinalSegmentRef = useRef(onFinalSegment);
+
   const lastTranscriptRef = useRef('');
-  // Accumulate finalized text across recognition session restarts
   const committedRef = useRef('');
-  // Track final-only text from the current session (committed on session end)
   const sessionFinalRef = useRef('');
+  const languageIndexRef = useRef(0);
+  const lastFinalAtRef = useRef(Date.now());
+  const lastLanguageStartAtRef = useRef(Date.now());
+  const rotationMonitorRef = useRef(null);
 
   useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
+
+  useEffect(() => {
+    onChangeRef.current = onTranscriptChange;
+  }, [onTranscriptChange]);
+
+  useEffect(() => {
+    onFinalSegmentRef.current = onFinalSegment;
+  }, [onFinalSegment]);
+
+  useEffect(() => {
+    const normalized = normalizeRecognitionLanguages(language);
+    languagesRef.current = normalized;
+
+    const currentLang = activeLanguageRef.current;
+    const currentIndex = normalized.indexOf(currentLang);
+    languageIndexRef.current = currentIndex >= 0 ? currentIndex : 0;
+    activeLanguageRef.current = normalized[languageIndexRef.current];
+    setActiveLanguage(activeLanguageRef.current);
+  }, [languageKey]);
+
+  useEffect(() => {
+    const clearRotationMonitor = () => {
+      if (rotationMonitorRef.current) {
+        clearInterval(rotationMonitorRef.current);
+        rotationMonitorRef.current = null;
+      }
+    };
+
+    const commitSessionFinal = () => {
+      if (sessionFinalRef.current) {
+        committedRef.current = `${committedRef.current}${sessionFinalRef.current}\n`;
+        sessionFinalRef.current = '';
+      }
+    };
+
     if (!enabled) {
+      clearRotationMonitor();
       recognitionRef.current?.stop();
       setIsListening(false);
       return;
@@ -54,25 +108,54 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = primaryLanguage;
+
+    const configureLanguage = () => {
+      const selectedLanguages = languagesRef.current;
+      const lang = selectedLanguages[languageIndexRef.current % selectedLanguages.length];
+      recognition.lang = lang;
+      activeLanguageRef.current = lang;
+      setActiveLanguage(lang);
+    };
+
+    const maybeRotateLanguage = () => {
+      const selectedLanguages = languagesRef.current;
+      if (selectedLanguages.length <= 1) return;
+      languageIndexRef.current = (languageIndexRef.current + 1) % selectedLanguages.length;
+    };
+
+    const startRotationMonitor = () => {
+      clearRotationMonitor();
+      if (languagesRef.current.length <= 1) return;
+
+      rotationMonitorRef.current = setInterval(() => {
+        if (!enabledRef.current || recognitionRef.current !== recognition) return;
+        const elapsedOnCurrentLanguage = Date.now() - lastLanguageStartAtRef.current;
+        if (elapsedOnCurrentLanguage >= rotationIntervalMs) {
+          try {
+            recognition.stop();
+          } catch {
+            // ignore
+          }
+        }
+      }, 1000);
+    };
 
     recognition.onstart = () => {
       setIsListening(true);
-      // Clear any previous error so stale messages don't persist after a
-      // successful restart (e.g. after the user grants microphone permission).
       setError(null);
+      lastFinalAtRef.current = Date.now();
+      lastLanguageStartAtRef.current = Date.now();
+      startRotationMonitor();
     };
+
     recognition.onend = () => {
-      // Commit the finalized text from this session before restarting, adding a trailing
-      // newline so the next session's text always starts on a new line in the transcript.
-      if (sessionFinalRef.current) {
-        committedRef.current = committedRef.current + sessionFinalRef.current + '\n';
-      }
-      sessionFinalRef.current = '';
+      commitSessionFinal();
       setIsListening(false);
-      // Read the ref — not the closed-over value — to decide whether to restart.
-      // This prevents accidental restarts after the user has toggled listening off.
+      clearRotationMonitor();
+
       if (enabledRef.current && recognitionRef.current === recognition) {
+        maybeRotateLanguage();
+        configureLanguage();
         try {
           recognition.start();
         } catch (err) {
@@ -82,55 +165,70 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     };
 
     recognition.onerror = (event) => {
-      // Ignore non-error conditions: brief silence and mid-session restarts
       if (event.error === 'no-speech' || event.error === 'aborted') return;
       setError(SPEECH_ERROR_MESSAGES[event.error] || `Speech recognition error: ${event.error}`);
     };
 
     recognition.onresult = (event) => {
-      let sessionFinal = '';
+      let finalDelta = '';
       let sessionInterim = '';
-      for (const result of Array.from(event.results)) {
+
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const text = result?.[0]?.transcript || '';
+        if (!text) continue;
         if (result.isFinal) {
-          sessionFinal += result[0].transcript;
+          finalDelta += text;
         } else {
-          sessionInterim += result[0].transcript;
+          sessionInterim += text;
         }
       }
-      // Keep track of final text in this session so onend can commit it
-      sessionFinalRef.current = sessionFinal;
 
-      const current = committedRef.current + sessionFinal + sessionInterim;
+      if (finalDelta) {
+        sessionFinalRef.current += finalDelta;
+        lastFinalAtRef.current = Date.now();
+        const cleaned = finalDelta.trim();
+        if (cleaned) {
+          onFinalSegmentRef.current?.({
+            text: cleaned,
+            language: activeLanguageRef.current,
+            timestamp: Date.now(),
+          });
+        }
+      }
 
-      // Skip no-op updates — Chrome fires onresult very frequently with interim
-      // results; skipping duplicates prevents unnecessary re-renders.
+      const current = committedRef.current + sessionFinalRef.current + sessionInterim;
       if (current === lastTranscriptRef.current) return;
-      lastTranscriptRef.current = current;
 
+      lastTranscriptRef.current = current;
       setTranscript(current);
       onChangeRef.current?.(current);
     };
 
+    configureLanguage();
     recognition.start();
     recognitionRef.current = recognition;
 
     return () => {
-      // Nullify the ref before stopping so onend won't auto-restart
+      clearRotationMonitor();
       recognitionRef.current = null;
-      lastTranscriptRef.current = '';
-      committedRef.current = '';
-      sessionFinalRef.current = '';
+      commitSessionFinal();
       recognition.stop();
     };
-  }, [enabled, primaryLanguage]);
+  }, [enabled, languageKey, rotationIntervalMs]);
 
   const clearTranscript = () => {
-    // Reset the de-dupe ref and all accumulated text so subsequent Web Speech results are not skipped.
     lastTranscriptRef.current = '';
     committedRef.current = '';
     sessionFinalRef.current = '';
     setTranscript('');
   };
 
-  return { transcript, isListening, error, clearTranscript };
+  return {
+    transcript,
+    isListening,
+    error,
+    activeLanguage,
+    clearTranscript,
+  };
 }

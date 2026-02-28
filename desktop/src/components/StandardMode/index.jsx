@@ -2,6 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
 import { useTranscript } from '../../hooks/useTranscript';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
+import { LANGUAGES } from '../../constants';
+import {
+  buildSessionExportText,
+  extractManualQuestionFromTranscript,
+  guessSpeakerLabel,
+} from '../../utils/interviewTranscript';
 import './StandardMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
@@ -12,6 +18,7 @@ export default function StandardMode({ onBack }) {
   const [customInput, setCustomInput] = useState('');
   const [conversationHistory, setConversationHistory] = useState([]);
   const [lastQuestion, setLastQuestion] = useState('');
+  const [transcriptEntries, setTranscriptEntries] = useState([]);
   const detectionTimeoutRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
   // Track the in-flight question so we can save user+assistant pair when generation completes
@@ -31,6 +38,10 @@ export default function StandardMode({ onBack }) {
   useEffect(() => { conversationHistoryRef.current = conversationHistory; }, [conversationHistory]);
 
   const { answer, isLoading, error: aiError, generateAnswer, cancelGeneration, clearAnswer } = useAIAnswer();
+
+  const languageLabelByValue = useRef(
+    Object.fromEntries(LANGUAGES.map((l) => [l.value, l.label]))
+  );
 
   const triggerAnswerGeneration = useCallback((question) => {
     pendingQuestionRef.current = question;
@@ -83,12 +94,31 @@ export default function StandardMode({ onBack }) {
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
 
-  const { transcript, isListening, error: transcriptError, clearTranscript } = useTranscript({
+  const {
+    transcript,
+    isListening,
+    error: transcriptError,
+    activeLanguage,
+    clearTranscript,
+  } = useTranscript({
     // Always enable transcript when running so the manual "Answer" button and custom input work
     // even when both showTranscript and autoAnswer are off.
     enabled: isRunning,
     language: interviewLangs,
     onTranscriptChange: handleTranscriptUpdate,
+    onFinalSegment: ({ text, language: segmentLanguage, timestamp }) => {
+      const speaker = guessSpeakerLabel(text);
+      setTranscriptEntries((prev) => ([
+        ...prev,
+        {
+          text,
+          language: segmentLanguage,
+          speaker,
+          timestamp,
+        },
+      ].slice(-500)));
+    },
+    rotationIntervalMs: 8000,
   });
 
   const handleCustomSubmit = (e) => {
@@ -101,9 +131,10 @@ export default function StandardMode({ onBack }) {
   };
 
   const handleManualAnswer = () => {
-    if (transcript.trim()) {
-      runQuestionDetection(transcript);
-    }
+    const manualQuestion = extractManualQuestionFromTranscript(transcript);
+    if (!manualQuestion) return;
+    setLastQuestion(manualQuestion);
+    triggerAnswerGeneration(manualQuestion);
   };
 
   const handleToggle = () => {
@@ -115,6 +146,7 @@ export default function StandardMode({ onBack }) {
       setIsRunning(true);
       clearAnswer();
       clearTranscript();
+      setTranscriptEntries([]);
     }
   };
 
@@ -151,13 +183,20 @@ export default function StandardMode({ onBack }) {
   }
 
   const handleExport = () => {
-    if (completedTurns.length === 0) return;
-    const lines = completedTurns.flatMap((turn) => [
-      `Q: ${turn.question}`,
-      `A: ${turn.answer}`,
-      '',
-    ]);
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    if (!transcript.trim() && completedTurns.length === 0) return;
+
+    const content = buildSessionExportText({
+      transcript,
+      transcriptEntries,
+      completedTurns,
+      metadata: {
+        topic: setup.topic,
+        answerLang: setup.answerLang,
+        interviewLangs,
+      },
+    });
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -196,12 +235,13 @@ export default function StandardMode({ onBack }) {
               clearAnswer();
               clearTranscript();
               setLastQuestion('');
+              setTranscriptEntries([]);
             }}
           >
             Clear
           </button>
         )}
-        {completedTurns.length > 0 && (
+        {(completedTurns.length > 0 || transcript.trim()) && (
           <button className="btn-export" onClick={handleExport}>
             Export
           </button>
@@ -214,8 +254,29 @@ export default function StandardMode({ onBack }) {
 
       {session.showTranscript && transcript && (
         <div className="transcript-box">
-          <div className="box-label">🎤 Transcript</div>
-          <p className="transcript-text">{transcript}</p>
+          <div className="box-label-row">
+            <span className="box-label">🎤 Transcript</span>
+            <span className="transcript-lang-badge">
+              Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
+              {interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
+            </span>
+          </div>
+
+          {transcriptEntries.length > 0 ? (
+            <div className="transcript-entry-list">
+              {transcriptEntries.slice(-20).map((entry, idx) => (
+                <div key={`${entry.timestamp}-${idx}`} className="transcript-entry">
+                  <span className={`speaker-tag speaker-${entry.speaker.toLowerCase()}`}>
+                    {entry.speaker}
+                  </span>
+                  <span className="entry-language-tag">{entry.language}</span>
+                  <span className="entry-text">{entry.text}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="transcript-text">{transcript}</p>
+          )}
         </div>
       )}
 

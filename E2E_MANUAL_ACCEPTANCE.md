@@ -86,6 +86,19 @@ npm start
 
 ---
 
+### 用例 LT-03：多语言轮询识别（中文 + 英文）
+
+1. 在 Interview Setup 勾选 `Chinese (Mandarin)` 和 `English (US)`。
+2. Standard Mode 点击 `Start Listening`。
+3. 先说中文句子，再说英文句子。
+4. 观察 transcript 区域右上角 `Listening: ... (auto-cycle)` 与分段条目。
+
+预期：
+- transcript 中可出现中英混合片段。
+- 识别语言标记会在多语言间轮询切换（非固定单语言）。
+
+---
+
 ## 2.2 AI Answer Generation（Streaming）
 
 ### 用例 AI-01：自动检测问题并流式回答
@@ -109,6 +122,17 @@ npm start
 预期：
 - 能正常触发生成，不依赖语音。
 - 新问题会替换并生成新答案，不应与旧答案错位拼接。
+
+---
+
+### 用例 AI-02b：Answer Current Transcript 手动触发
+
+1. 关闭 `Auto Answer`。
+2. 说一段 transcript（可不带问号）。
+3. 点击 `💡 Answer Current Transcript`。
+
+预期：
+- 可直接触发回答生成（不依赖 detect-question 返回 true）。
 
 ---
 
@@ -234,6 +258,19 @@ npm start
 
 ---
 
+### 用例 CFG-04：导出内容完整性（Transcript + Q/A）
+
+1. 在 Standard Mode 进行至少 1 轮语音转写和 1 轮回答。
+2. 点击 `Export`。
+3. 打开导出的 `.txt` 文件。
+
+预期：
+- 包含 `=== Full Transcript ===` 段落（完整转写）。
+- 包含 `=== Q&A ===` 段落（问答记录）。
+- 若有分段 transcript，应含说话人和语言标记。
+
+---
+
 ## 2.6 Cross-Platform（Windows / macOS）
 
 ### 用例 CP-01：基础流程一致性
@@ -274,4 +311,3 @@ npm start
 2. UM-01 -> UM-02 -> UM-04（再验证双端联动）
 3. CFG-01/02/03（最后做参数矩阵）
 4. CP-01（跨平台抽检）
-

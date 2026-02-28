@@ -19,6 +19,7 @@ import { useSocketClient } from '../hooks/useSocketClient';
 export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) {
   const [answer, setAnswer] = useState('');
   const [transcript, setTranscript] = useState('');
+  const [transcriptMeta, setTranscriptMeta] = useState({ language: null, speaker: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Connecting…');
   const [error, setError] = useState(null);
@@ -56,8 +57,12 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
     }
   }, []);
 
-  const handleTranscriptUpdate = useCallback((text) => {
+  const handleTranscriptUpdate = useCallback((text, payload = {}) => {
     setTranscript(text);
+    setTranscriptMeta({
+      language: payload?.language || null,
+      speaker: payload?.speaker || null,
+    });
   }, []);
 
   const handleHostDisconnected = useCallback(() => {
@@ -87,6 +92,7 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
   const clearAll = () => {
     setAnswer('');
     setTranscript('');
+    setTranscriptMeta({ language: null, speaker: null });
     setIsGenerating(false);
     clearTimeout(copyTimeoutRef.current);
     setCopied(false);
@@ -160,7 +166,11 @@ export default function SessionScreen({ sessionCode, serverUrl, onDisconnect }) 
         {/* Transcript */}
         {transcript ? (
           <View style={styles.transcriptBox}>
-            <Text style={styles.boxLabel}>🎤 Transcript</Text>
+            <Text style={styles.boxLabel}>
+              🎤 Transcript
+              {transcriptMeta.speaker ? ` · ${transcriptMeta.speaker}` : ''}
+              {transcriptMeta.language ? ` · ${transcriptMeta.language}` : ''}
+            </Text>
             <Text style={styles.transcriptText}>{transcript}</Text>
           </View>
         ) : null}

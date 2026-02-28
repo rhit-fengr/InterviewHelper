@@ -142,6 +142,62 @@
   animation: pulse 1s infinite;
 }
 
+.transcript-lang-badge {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.transcript-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.transcript-entry {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+}
+
+.speaker-tag {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 2px 8px;
+  text-transform: uppercase;
+}
+
+.speaker-interviewer {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
+.speaker-candidate {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.speaker-unknown {
+  background: rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+}
+
+.entry-language-tag {
+  color: #a78bfa;
+  font-size: 11px;
+}
+
+.entry-text {
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .btn-copy {
   background: none;
   border: 1px solid rgba(255, 255, 255, 0.15);

@@ -3,6 +3,7 @@ import { useInterviewStore } from '../../store/interviewStore';
 import { useSocketSync } from '../../hooks/useSocketSync';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
 import { useTranscript } from '../../hooks/useTranscript';
+import { guessSpeakerLabel } from '../../utils/interviewTranscript';
 import './UndetectableMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
@@ -29,6 +30,7 @@ export default function UndetectableMode({ onBack }) {
   const personalInfoRef = useRef(personalInfo);
   const setupRef = useRef(setup);
   const conversationHistoryRef = useRef(conversationHistory);
+  const activeLanguageRef = useRef('en-US');
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { answerSettingsRef.current = answerSettings; }, [answerSettings]);
   useEffect(() => { personalInfoRef.current = personalInfo; }, [personalInfo]);
@@ -91,7 +93,12 @@ export default function UndetectableMode({ onBack }) {
 
   const handleTranscriptUpdate = useCallback((text) => {
     // Forward transcript to mobile
-    if (clientConnected) streamTranscript(sessionCode, text);
+    if (clientConnected) {
+      streamTranscript(sessionCode, text, {
+        language: activeLanguageRef.current,
+        speaker: guessSpeakerLabel(text),
+      });
+    }
     // Auto-detect question and generate answer if enabled
     if (sessionRef.current.autoAnswer) {
       clearTimeout(detectionTimeoutRef.current);
@@ -101,11 +108,15 @@ export default function UndetectableMode({ onBack }) {
     }
   }, [clientConnected, sessionCode, streamTranscript, runQuestionDetection]);
 
-  const { transcript } = useTranscript({
+  const { transcript, activeLanguage } = useTranscript({
     enabled: isRunning,
     language: Array.isArray(setup.interviewLangs) ? setup.interviewLangs : [setup.interviewLang || 'en-US'],
     onTranscriptChange: handleTranscriptUpdate,
   });
+
+  useEffect(() => {
+    activeLanguageRef.current = activeLanguage || activeLanguageRef.current;
+  }, [activeLanguage]);
 
   // Register the session with the server once socket connects
   useEffect(() => {

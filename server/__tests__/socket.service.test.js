@@ -120,9 +120,16 @@ describe('socket.service integration', () => {
     await hostConnectedPromise;
 
     const transcriptPromise = waitForEvent(mobile, 'transcript-update');
-    host.emit('transcript-update', { sessionCode: 'IRON-1234', transcript: 'Tell me about yourself' });
-    const [{ transcript }] = await transcriptPromise;
+    host.emit('transcript-update', {
+      sessionCode: 'IRON-1234',
+      transcript: 'Tell me about yourself',
+      language: 'en-US',
+      speaker: 'Interviewer',
+    });
+    const [{ transcript, language, speaker }] = await transcriptPromise;
     expect(transcript).toBe('Tell me about yourself');
+    expect(language).toBe('en-US');
+    expect(speaker).toBe('Interviewer');
 
     const answerPromise = waitForEvent(mobile, 'answer-chunk');
     host.emit('stream-answer', { sessionCode: 'IRON-1234', chunk: 'Hello', isDone: false });

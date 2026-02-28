@@ -126,6 +126,35 @@ describe('useSocketClient', () => {
     expect(onTranscriptUpdate).toHaveBeenCalledWith('Tell me about yourself');
   });
 
+  it('passes transcript payload metadata when callback accepts second argument', () => {
+    const onTranscriptUpdate = jest.fn((text, payload) => ({ text, payload }));
+    renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://localhost:4000',
+        sessionCode: 'TEST-1234',
+        onTranscriptUpdate,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => { socket._trigger('connect'); });
+    act(() => {
+      socket._trigger('transcript-update', {
+        transcript: '自我介绍一下',
+        language: 'zh-CN',
+        speaker: 'Interviewer',
+      });
+    });
+
+    expect(onTranscriptUpdate).toHaveBeenCalledWith(
+      '自我介绍一下',
+      expect.objectContaining({
+        language: 'zh-CN',
+        speaker: 'Interviewer',
+      })
+    );
+  });
+
   it('sets sessionStatus to "error" and calls onHostDisconnected on host-disconnected', () => {
     const onHostDisconnected = jest.fn();
     const { result } = renderHook(() =>

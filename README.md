@@ -111,7 +111,7 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 |---|---|
 | AI Provider | `OpenAI` or `Google Gemini` |
 | Topic | Interview category (Software Engineering, Behavioral, etc.) |
-| Interview Language | Language the interviewer speaks |
+| Interview Language | One or more interviewer languages (auto-cycled when multiple are selected) |
 | Answer Language | Language for AI-generated answers |
 | Additional Instructions | Your background / custom prompt additions |
 
@@ -141,8 +141,11 @@ Speech-to-text is powered by the browser's native [Web Speech API](https://devel
 
 - Runs continuously with `interimResults: true` so you see words as you speak.
 - Automatically restarts if the browser ends the session (e.g. after a short pause) — the restart is guarded by a ref so it won't fire after the user has explicitly stopped.
+- Supports multi-language mode by rotating recognition language across selected interview languages when no finalized speech is detected for a short interval.
 - Exposes an `error` state for any `SpeechRecognitionError` except `no-speech` (brief silence is normal and should not surface as a user-visible error).
-- Sets `recognition.lang` from the **Interview Language** setting, so the API listens in the right language. If noise or an unexpected language is detected, the transcript may be garbled — you can clear it manually or wait for the next speech segment to overwrite it.
+- Sets `recognition.lang` from the selected interview languages, so the API can capture bilingual interview flows better than single-language mode.
+
+Speaker labels in the transcript are heuristic (`Interviewer` / `Candidate`) and are intended for readability/export organization. Web Speech API itself does not provide true speaker diarization.
 
 ### AI Prompt Engineering (`openai.service.js`)
 
@@ -311,6 +314,10 @@ Output is in `desktop/out/`.
 - Use a broadly available model first, e.g. `GEMINI_MODEL=gemini-2.0-flash`.
 - Optionally set fallbacks, e.g. `GEMINI_FALLBACK_MODELS=gemini-1.5-flash`.
 - Restart the server after changing environment variables.
+
+**"Answer Current Transcript" appears to do nothing**
+- The manual answer button now sends the current transcript directly as a prompt (it no longer depends on question-detection heuristics).
+- Ensure transcript text is non-empty and microphone input is active.
 
 **Mobile app cannot connect**
 - Ensure the device is on the same network as the server.

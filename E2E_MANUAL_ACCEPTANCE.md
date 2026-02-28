@@ -1,4 +1,4 @@
-# InterviewHelper 端到端手工验收脚本
+# Interview AI Hamburger 端到端手工验收脚本
 
 本文档用于按 `README.md` 的 Feature List 逐条验收，强调“可执行步骤 + 可观察结果”。
 
@@ -191,7 +191,7 @@ npm start
 2. 拖动窗口并打开其他应用窗口（浏览器/IDE）。
 
 预期：
-- InterviewHelper 窗口保持前置（Always On Top 打开时）。
+- Interview AI Hamburger 窗口保持前置（Always On Top 打开时）。
 
 ---
 

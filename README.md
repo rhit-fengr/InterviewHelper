@@ -1,4 +1,4 @@
-# InterviewHelper
+# Interview AI Hamburger
 
 An AI-powered interview assistant desktop application that provides real-time answer generation during interviews. Built with Electron, React, Node.js, and provider-flexible AI backends (OpenAI or Google Gemini).
 
@@ -19,7 +19,7 @@ An AI-powered interview assistant desktop application that provides real-time an
 ## Project Structure
 
 ```
-interview-hammer/
+interview-ai-hamburger/
 ├── desktop/                   # Electron + React desktop app
 │   ├── electron/
 │   │   ├── main.js            # Main process (window management, screen protection)

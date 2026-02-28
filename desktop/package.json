@@ -1,5 +1,5 @@
 {
-  "name": "interview-hammer-desktop",
+  "name": "interview-ai-hamburger-desktop",
   "version": "1.0.0",
   "description": "AI Interview Helper Desktop Application",
   "main": "electron/main.js",
@@ -35,8 +35,8 @@
     "development": ["last 1 chrome version"]
   },
   "build": {
-    "appId": "com.interviewhammer.desktop",
-    "productName": "Interview Hammer",
+    "appId": "com.interviewaihamburger.desktop",
+    "productName": "Interview AI Hamburger",
     "extraMetadata": {
       "main": "electron/main.js"
     },
@@ -49,7 +49,7 @@
     },
     "win": {
       "target": "nsis",
-      "artifactName": "Interview-Hammer-${version}-${arch}-Setup.${ext}"
+      "artifactName": "Interview-AI-Hamburger-${version}-${arch}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -57,7 +57,7 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Interview Hammer"
+      "shortcutName": "Interview AI Hamburger"
     }
   },
   "homepage": "./"

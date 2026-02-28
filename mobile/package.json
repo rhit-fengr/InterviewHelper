@@ -1,7 +1,7 @@
 {
-  "name": "interview-hammer-mobile",
+  "name": "interview-ai-hamburger-mobile",
   "version": "1.0.0",
-  "description": "Interview Hammer Mobile Companion App",
+  "description": "Interview AI Hamburger Mobile Companion App",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",

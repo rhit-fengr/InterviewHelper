@@ -239,7 +239,7 @@ export default function UndetectableMode({ onBack }) {
         <div className="instructions-box">
           <h4 className="instructions-title">Connect Your Phone</h4>
           <ol className="instructions-list">
-            <li>Open Interview Hammer on your mobile device</li>
+            <li>Open Interview AI Hamburger on your mobile device</li>
             <li>Tap <strong>"Connect to Session"</strong></li>
             <li>Enter code: <strong className="code-highlight">{sessionCode}</strong></li>
             <li>Tap Connect — answers stream to your phone</li>

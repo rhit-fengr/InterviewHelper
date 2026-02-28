@@ -201,7 +201,7 @@ export default function MoreSettings({ onBack }) {
           />
           <div>
             <div className="checkbox-label">Always On Top</div>
-            <div className="checkbox-desc">Keep Interview Hammer above other windows</div>
+            <div className="checkbox-desc">Keep Interview AI Hamburger above other windows</div>
           </div>
         </label>
       </section>

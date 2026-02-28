@@ -22,5 +22,5 @@ httpServer.on('error', (err) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`Interview Hammer server running on port ${PORT}`);
+  console.log(`Interview AI Hamburger server running on port ${PORT}`);
 });

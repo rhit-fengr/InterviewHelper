@@ -1,5 +1,21 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+
+const PERSIST_KEY = 'interview-ai-hamburger-storage';
+const LEGACY_PERSIST_KEY = 'interview-hammer-storage';
+
+const storage = createJSONStorage(() => ({
+  getItem: (name) => {
+    const currentValue = window.localStorage.getItem(name);
+    if (currentValue !== null) return currentValue;
+    if (name === PERSIST_KEY) {
+      return window.localStorage.getItem(LEGACY_PERSIST_KEY);
+    }
+    return null;
+  },
+  setItem: (name, value) => window.localStorage.setItem(name, value),
+  removeItem: (name) => window.localStorage.removeItem(name),
+}));
 
 export const useInterviewStore = create(
   persist(
@@ -70,6 +86,6 @@ export const useInterviewStore = create(
       updateAdvancedSettings: (data) =>
         set((state) => ({ advancedSettings: { ...state.advancedSettings, ...data } })),
     }),
-    { name: 'interview-hammer-storage' }
+    { name: PERSIST_KEY, storage }
   )
 );

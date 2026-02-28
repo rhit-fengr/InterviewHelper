@@ -73,7 +73,7 @@ function TitleBar() {
 
   return (
     <div className="title-bar">
-      <span className="title-bar-name">⚡ Interview Hammer</span>
+      <span className="title-bar-name">⚡ Interview AI Hamburger</span>
       <div className="title-bar-controls">
         <button className="tb-btn tb-minimize" onClick={handleMinimize} title="Minimize">
           &#8722;

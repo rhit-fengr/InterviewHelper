@@ -1,7 +1,7 @@
 {
-  "name": "interview-hammer-server",
+  "name": "interview-ai-hamburger-server",
   "version": "1.0.0",
-  "description": "Interview Hammer Backend API Server",
+  "description": "Interview AI Hamburger Backend API Server",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

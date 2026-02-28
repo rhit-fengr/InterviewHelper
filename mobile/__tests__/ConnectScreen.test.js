@@ -40,7 +40,7 @@ describe('ConnectScreen', () => {
     await waitFor(() => {
       expect(onConnect).toHaveBeenCalledWith('IRON-1234', 'http://192.168.1.2:4000');
       expect(AsyncStorage.setItem).toHaveBeenCalledWith(
-        '@interview_hammer_server_url',
+        '@interview_ai_hamburger_server_url',
         'http://192.168.1.2:4000'
       );
     });

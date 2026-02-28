@@ -88,6 +88,26 @@ describe('AI answer streaming route', () => {
     errorSpy.mockRestore();
   });
 
+  it('streams a provider-specific message when Gemini returns HTTP 400', async () => {
+    normalizeProvider.mockReturnValue('gemini');
+    const badRequestErr = Object.assign(new Error('INVALID_ARGUMENT'), { status: 400 });
+    generateAnswer.mockRejectedValue(badRequestErr);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await request(app)
+      .post('/api/ai/answer')
+      .send({ question: 'Tell me about yourself', provider: 'gemini' });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('data: {"error":"Gemini rejected this request (400). Check GEMINI_MODEL/GEMINI_API_KEY and try again."}\n\n');
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[AI answer] stream init error:',
+      expect.any(Error)
+    );
+
+    errorSpy.mockRestore();
+  });
+
   it('returns 503 with key hint when selected provider is not configured', async () => {
     normalizeProvider.mockReturnValue('gemini');
     isProviderConfigured.mockReturnValue(false);

@@ -56,9 +56,12 @@ router.post('/answer', async (req, res) => {
     });
   } catch (err) {
     console.error('[AI answer] stream init error:', err);
-    const userMessage = err?.status === 429
-      ? 'Rate limit reached. Please wait a moment and try again.'
-      : 'Failed to start answer generation';
+    let userMessage = 'Failed to start answer generation';
+    if (err?.status === 429) {
+      userMessage = 'Rate limit reached. Please wait a moment and try again.';
+    } else if (provider === 'gemini' && err?.status === 400) {
+      userMessage = 'Gemini rejected this request (400). Check your request parameters and Gemini configuration (e.g., GEMINI_MODEL, GEMINI_API_KEY) and try again.';
+    }
     res.write(`data: ${JSON.stringify({ error: userMessage })}\n\n`);
     res.end();
     return;

@@ -11,7 +11,8 @@ const OPENAI_DETECT_MODEL = process.env.OPENAI_DETECT_MODEL || 'gpt-4o-mini';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || GEMINI_MODEL;
 const GEMINI_BASE_URL =
-  process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/';
+  (process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai')
+    .replace(/\/+$/, '');
 
 /**
  * Backward-compatible flag: whether OPENAI_API_KEY exists.
@@ -80,6 +81,16 @@ function getDetectModel(provider) {
   return p === 'gemini' ? GEMINI_DETECT_MODEL : OPENAI_DETECT_MODEL;
 }
 
+function sanitizeMessages(messages) {
+  return (messages || [])
+    .filter((m) => ['system', 'user', 'assistant'].includes(m?.role))
+    .map((m) => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : String(m.content || ''),
+    }))
+    .filter((m) => m.content.trim().length > 0);
+}
+
 /**
  * Build a system prompt personalised for the candidate.
  */
@@ -122,20 +133,43 @@ async function generateAnswer({
   const systemPrompt = buildSystemPrompt(personalInfo, answerSettings, setup);
   const maxTokens = TOKEN_LIMITS[answerSettings?.answerLength] || TOKEN_LIMITS.medium;
 
-  const messages = [
+  const messages = sanitizeMessages([
     { role: 'system', content: systemPrompt },
     ...conversationHistory.slice(-(answerSettings?.memoryLimit || 10)),
     { role: 'user', content: question },
-  ];
+  ]);
 
-  const stream = await client.chat.completions.create({
+  const requestPayload = {
     model: getAnswerModel(selectedProvider),
     messages,
     stream: true,
-    max_tokens: maxTokens,
-  });
+  };
+  if (selectedProvider !== 'gemini') {
+    requestPayload.max_tokens = maxTokens;
+  }
 
-  return stream;
+  try {
+    return await client.chat.completions.create(requestPayload);
+  } catch (err) {
+    // Gemini's OpenAI-compatible endpoint can return HTTP 400 for payloads that are valid for
+    // OpenAI (e.g., long or complex conversation histories or certain role combinations).
+    // In that case, retry with a minimal payload (only system + current user messages, no extra
+      const minimalMessages = [
+        messages[0],
+        messages[messages.length - 1],
+      ];
+      const minimalPayload = {
+        model: getAnswerModel(selectedProvider),
+        messages: minimalMessages,
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: question },
+        ]),
+        stream: true,
+      };
+      return client.chat.completions.create(minimalPayload);
+    }
+    throw err;
+  }
 }
 
 function tryParseJson(raw) {
@@ -167,7 +201,7 @@ async function detectQuestion(transcript, sensitivity = 'medium', provider) {
     high: 'Return true for explicit questions, implicit questions, and subtle prompts like "tell me about..." or "walk me through..."',
   };
 
-  const response = await client.chat.completions.create({
+  const requestPayload = {
     model: getDetectModel(selectedProvider),
     messages: [
       {
@@ -175,8 +209,12 @@ async function detectQuestion(transcript, sensitivity = 'medium', provider) {
         content: `Transcript: "${transcript}"\n\n${sensitivityPrompts[sensitivity] || sensitivityPrompts.medium}\n\nReturn valid JSON only: {"isQuestion": boolean, "question": "extracted question or null"}`,
       },
     ],
-    max_tokens: 150,
-  });
+  };
+  if (selectedProvider !== 'gemini') {
+    requestPayload.max_tokens = 150;
+  }
+
+  const response = await client.chat.completions.create(requestPayload);
 
   const raw = response.choices?.[0]?.message?.content || '';
   const parsed = tryParseJson(raw);

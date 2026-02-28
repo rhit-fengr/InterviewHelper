@@ -29,6 +29,10 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
   useEffect(() => { onChangeRef.current = onTranscriptChange; }, [onTranscriptChange]);
   // Track last emitted transcript to skip no-op updates (reduces re-renders in Chrome)
   const lastTranscriptRef = useRef('');
+  // Accumulate finalized text across recognition session restarts
+  const committedRef = useRef('');
+  // Track final-only text from the current session (committed on session end)
+  const sessionFinalRef = useRef('');
 
   useEffect(() => {
     if (!enabled) {
@@ -57,6 +61,9 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
       setError(null);
     };
     recognition.onend = () => {
+      // Commit the finalized text from this session before restarting
+      committedRef.current += sessionFinalRef.current;
+      sessionFinalRef.current = '';
       setIsListening(false);
       // Read the ref — not the closed-over value — to decide whether to restart.
       // This prevents accidental restarts after the user has toggled listening off.
@@ -76,9 +83,19 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     };
 
     recognition.onresult = (event) => {
-      const current = Array.from(event.results)
-        .map((result) => result[0].transcript)
-        .join('');
+      let sessionFinal = '';
+      let sessionInterim = '';
+      for (const result of Array.from(event.results)) {
+        if (result.isFinal) {
+          sessionFinal += result[0].transcript;
+        } else {
+          sessionInterim += result[0].transcript;
+        }
+      }
+      // Keep track of final text in this session so onend can commit it
+      sessionFinalRef.current = sessionFinal;
+
+      const current = committedRef.current + sessionFinal + sessionInterim;
 
       // Skip no-op updates — Chrome fires onresult very frequently with interim
       // results; skipping duplicates prevents unnecessary re-renders.
@@ -96,13 +113,17 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
       // Nullify the ref before stopping so onend won't auto-restart
       recognitionRef.current = null;
       lastTranscriptRef.current = '';
+      committedRef.current = '';
+      sessionFinalRef.current = '';
       recognition.stop();
     };
   }, [enabled, language]);
 
   const clearTranscript = () => {
-    // Reset the de-dupe ref so subsequent Web Speech results are not skipped.
+    // Reset the de-dupe ref and all accumulated text so subsequent Web Speech results are not skipped.
     lastTranscriptRef.current = '';
+    committedRef.current = '';
+    sessionFinalRef.current = '';
     setTranscript('');
   };
 

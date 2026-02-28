@@ -141,7 +141,18 @@ export default function StandardMode({ onBack }) {
           {isRunning ? '⏹ Stop Listening' : '🎙️ Start Listening'}
         </button>
         {isRunning && (
-          <button className="btn-clear" onClick={() => { clearAnswer(); clearTranscript(); setLastQuestion(''); }}>
+          <button
+            className="btn-clear"
+            onClick={() => {
+              cancelGeneration();
+              pendingQuestionRef.current = null;
+              clearTimeout(detectionTimeoutRef.current);
+              detectionTimeoutRef.current = null;
+              clearAnswer();
+              clearTranscript();
+              setLastQuestion('');
+            }}
+          >
             Clear
           </button>
         )}

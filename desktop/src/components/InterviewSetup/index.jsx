@@ -6,6 +6,10 @@ import './InterviewSetup.css';
 export default function InterviewSetup({ onStart }) {
   const { setup, updateSetup } = useInterviewStore();
   const selectedProvider = setup.aiProvider || 'openai';
+  // Support legacy single-value migration: ensure interviewLangs is always an array
+  const interviewLangs = Array.isArray(setup.interviewLangs)
+    ? setup.interviewLangs
+    : [setup.interviewLang || 'en-US'];
 
   useEffect(() => {
     if (!setup.aiProvider) {
@@ -16,6 +20,17 @@ export default function InterviewSetup({ onStart }) {
   }, []);
 
   const handleChange = (field) => (e) => updateSetup({ [field]: e.target.value });
+
+  const handleInterviewLangToggle = (langValue) => {
+    const current = interviewLangs;
+    if (current.includes(langValue)) {
+      // Prevent deselecting the last language
+      if (current.length === 1) return;
+      updateSetup({ interviewLangs: current.filter((l) => l !== langValue) });
+    } else {
+      updateSetup({ interviewLangs: [...current, langValue] });
+    }
+  };
 
   return (
     <div className="setup-panel">
@@ -41,12 +56,28 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Interview Language</label>
-        <select className="form-select" value={setup.interviewLang} onChange={handleChange('interviewLang')}>
-          {LANGUAGES.map((l) => (
-            <option key={l.value} value={l.value}>{l.label}</option>
-          ))}
-        </select>
+        <label className="form-label">
+          Interview Language <span className="form-label-hint">(select one or more)</span>
+        </label>
+        <div className="lang-checkbox-grid">
+          {LANGUAGES.map((l) => {
+            const isOnlySelected = interviewLangs.includes(l.value) && interviewLangs.length === 1;
+            return (
+              <label
+                key={l.value}
+                className={`lang-checkbox-item${isOnlySelected ? ' lang-checkbox-item--locked' : ''}`}
+                title={isOnlySelected ? 'At least one language must be selected' : ''}
+              >
+                <input
+                  type="checkbox"
+                  checked={interviewLangs.includes(l.value)}
+                  onChange={() => handleInterviewLangToggle(l.value)}
+                />
+                <span>{l.label}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
 
       <div className="form-group">

@@ -78,19 +78,32 @@ export default function StandardMode({ onBack }) {
     }, 1500);
   }, [runQuestionDetection]);
 
+  // Support array of interview languages (use first for recognition)
+  const interviewLangs = Array.isArray(setup.interviewLangs)
+    ? setup.interviewLangs
+    : [setup.interviewLang || 'en-US'];
+
   const { transcript, isListening, error: transcriptError, clearTranscript } = useTranscript({
-    // Enable transcript when autoAnswer is on so we can run background question detection,
-    // even if the transcript UI is hidden (showTranscript === false).
-    enabled: isRunning && (session.showTranscript || session.autoAnswer),
-    language: setup.interviewLang,
+    // Always enable transcript when running so the manual "Answer" button and custom input work
+    // even when both showTranscript and autoAnswer are off.
+    enabled: isRunning,
+    language: interviewLangs,
     onTranscriptChange: handleTranscriptUpdate,
   });
 
   const handleCustomSubmit = (e) => {
     e.preventDefault();
     if (!customInput.trim()) return;
-    triggerAnswerGeneration(customInput.trim());
+    const question = customInput.trim();
+    setLastQuestion(question);
+    triggerAnswerGeneration(question);
     setCustomInput('');
+  };
+
+  const handleManualAnswer = () => {
+    if (transcript.trim()) {
+      runQuestionDetection(transcript);
+    }
   };
 
   const handleToggle = () => {
@@ -104,7 +117,6 @@ export default function StandardMode({ onBack }) {
       clearTranscript();
     }
   };
-
 
   useEffect(() => {
     return () => clearTimeout(detectionTimeoutRef.current);
@@ -128,6 +140,35 @@ export default function StandardMode({ onBack }) {
     }
     prevIsLoadingRef.current = isLoading;
   }, [isLoading, answer]);
+
+  // Build list of completed turns to show in the history section
+  const completedTurns = [];
+  for (let i = 0; i < conversationHistory.length - 1; i += 2) {
+    completedTurns.push({
+      question: conversationHistory[i]?.content || '',
+      answer: conversationHistory[i + 1]?.content || '',
+    });
+  }
+
+  const handleExport = () => {
+    if (completedTurns.length === 0) return;
+    const lines = completedTurns.flatMap((turn) => [
+      `Q: ${turn.question}`,
+      `A: ${turn.answer}`,
+      '',
+    ]);
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `interview-session-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 0);
+  };
 
   return (
     <div className="standard-panel">
@@ -160,6 +201,11 @@ export default function StandardMode({ onBack }) {
             Clear
           </button>
         )}
+        {completedTurns.length > 0 && (
+          <button className="btn-export" onClick={handleExport}>
+            Export
+          </button>
+        )}
       </div>
 
       {(transcriptError || aiError) && (
@@ -175,8 +221,23 @@ export default function StandardMode({ onBack }) {
 
       {lastQuestion && (
         <div className="question-box">
-          <div className="box-label">❓ Detected Question</div>
+          <div className="box-label-row">
+            <span className="box-label">❓ Detected Question</span>
+            {!session.autoAnswer && isRunning && !isLoading && (
+              <button className="btn-answer" onClick={() => triggerAnswerGeneration(lastQuestion)}>
+                Answer
+              </button>
+            )}
+          </div>
           <p className="question-text">{lastQuestion}</p>
+        </div>
+      )}
+
+      {!session.autoAnswer && isRunning && !lastQuestion && transcript.trim() && (
+        <div className="control-bar">
+          <button className="btn-answer-wide" onClick={handleManualAnswer} disabled={isLoading}>
+            💡 Answer Current Transcript
+          </button>
         </div>
       )}
 
@@ -198,6 +259,24 @@ export default function StandardMode({ onBack }) {
             {answer}
           </p>
           {isLoading && <span className="cursor-blink">▌</span>}
+        </div>
+      )}
+
+      {completedTurns.length > 0 && (
+        <div className="history-section">
+          <div className="history-header">
+            <span className="box-label">📋 Conversation History</span>
+          </div>
+          <div className="history-list">
+            {completedTurns.map((turn, idx) => (
+              <div key={idx} className="history-turn">
+                <div className="history-question">Q: {turn.question}</div>
+                <div className="history-answer" style={{ fontSize: `${displaySettings.fontSize}px` }}>
+                  A: {turn.answer}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react';
  *
  * @param {object} options
  * @param {boolean} options.enabled   - Whether recognition is active
- * @param {string}  options.language  - BCP-47 language tag (e.g. "en-US")
+ * @param {string|string[]}  options.language  - BCP-47 language tag (e.g. "en-US") or array of tags
  * @param {(text: string) => void} options.onTranscriptChange - Called on every update
  */
 const SPEECH_ERROR_MESSAGES = {
@@ -16,6 +16,8 @@ const SPEECH_ERROR_MESSAGES = {
 };
 
 export function useTranscript({ enabled = false, language = 'en-US', onTranscriptChange } = {}) {
+  // Support array of languages — use the first selected language for recognition
+  const primaryLanguage = Array.isArray(language) ? (language[0] || 'en-US') : (language || 'en-US');
   const [transcript, setTranscript] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [error, setError] = useState(null);
@@ -52,7 +54,7 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = language;
+    recognition.lang = primaryLanguage;
 
     recognition.onstart = () => {
       setIsListening(true);
@@ -61,8 +63,11 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
       setError(null);
     };
     recognition.onend = () => {
-      // Commit the finalized text from this session before restarting
-      committedRef.current += sessionFinalRef.current;
+      // Commit the finalized text from this session before restarting, adding a trailing
+      // newline so the next session's text always starts on a new line in the transcript.
+      if (sessionFinalRef.current) {
+        committedRef.current = committedRef.current + sessionFinalRef.current + '\n';
+      }
       sessionFinalRef.current = '';
       setIsListening(false);
       // Read the ref — not the closed-over value — to decide whether to restart.
@@ -117,7 +122,7 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
       sessionFinalRef.current = '';
       recognition.stop();
     };
-  }, [enabled, language]);
+  }, [enabled, primaryLanguage]);
 
   const clearTranscript = () => {
     // Reset the de-dupe ref and all accumulated text so subsequent Web Speech results are not skipped.

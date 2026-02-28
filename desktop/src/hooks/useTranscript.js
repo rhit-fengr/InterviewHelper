@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react';
  *
  * @param {object} options
  * @param {boolean} options.enabled   - Whether recognition is active
- * @param {string}  options.language  - BCP-47 language tag (e.g. "en-US")
+ * @param {string|string[]}  options.language  - BCP-47 language tag (e.g. "en-US") or array of tags
  * @param {(text: string) => void} options.onTranscriptChange - Called on every update
  */
 const SPEECH_ERROR_MESSAGES = {
@@ -66,9 +66,7 @@ export function useTranscript({ enabled = false, language = 'en-US', onTranscrip
       // Commit the finalized text from this session before restarting, adding a trailing
       // newline so the next session's text always starts on a new line in the transcript.
       if (sessionFinalRef.current) {
-        committedRef.current = committedRef.current
-          ? committedRef.current + '\n' + sessionFinalRef.current + '\n'
-          : sessionFinalRef.current + '\n';
+        committedRef.current = committedRef.current + sessionFinalRef.current + '\n';
       }
       sessionFinalRef.current = '';
       setIsListening(false);

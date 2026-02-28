@@ -9,6 +9,11 @@
     "server": "cd ../server && npm run dev",
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder",
+    "build:win": "npm run react-build && electron-builder --win nsis --x64",
+    "build:win:unsigned": "npm run react-build && electron-builder --win nsis --x64 --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
+    "build:win:portable": "npm run react-build && electron-builder --win portable --x64",
+    "release:win": "powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1",
+    "release:win:unsigned": "powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1 -NoSign",
     "test": "react-scripts test"
   },
   "dependencies": {
@@ -32,6 +37,9 @@
   "build": {
     "appId": "com.interviewhammer.desktop",
     "productName": "Interview Hammer",
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
     "directories": {
       "output": "out"
     },
@@ -40,7 +48,16 @@
       "category": "public.app-category.productivity"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "Interview-Hammer-${version}-${arch}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Interview Hammer"
     }
   },
   "homepage": "./"

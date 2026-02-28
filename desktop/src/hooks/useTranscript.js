@@ -129,8 +129,8 @@ export function useTranscript({
 
       rotationMonitorRef.current = setInterval(() => {
         if (!enabledRef.current || recognitionRef.current !== recognition) return;
-        const elapsedOnCurrentLanguage = Date.now() - lastLanguageStartAtRef.current;
-        if (elapsedOnCurrentLanguage >= rotationIntervalMs) {
+        const elapsedSinceLastFinal = Date.now() - lastFinalAtRef.current;
+        if (elapsedSinceLastFinal >= rotationIntervalMs) {
           try {
             recognition.stop();
           } catch {
@@ -173,12 +173,14 @@ export function useTranscript({
       let finalDelta = '';
       let sessionInterim = '';
 
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      for (let i = 0; i < event.results.length; i += 1) {
         const result = event.results[i];
         const text = result?.[0]?.transcript || '';
         if (!text) continue;
         if (result.isFinal) {
-          finalDelta += text;
+          if (i >= event.resultIndex) {
+            finalDelta += text;
+          }
         } else {
           sessionInterim += text;
         }

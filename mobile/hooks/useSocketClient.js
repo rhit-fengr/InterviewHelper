@@ -79,10 +79,16 @@ export function useSocketClient({
     });
 
     socket.on('transcript-update', (payload = {}) => {
-      const transcript =
-        typeof payload === 'string'
-          ? payload
-          : (payload?.transcript || '');
+      let transcript = '';
+      if (typeof payload === 'string') {
+        transcript = payload;
+      } else if (
+        payload &&
+        typeof payload === 'object' &&
+        typeof payload.transcript === 'string'
+      ) {
+        transcript = payload.transcript;
+      }
       if (!transcript) return;
 
       const callback = onTranscriptUpdateRef.current;

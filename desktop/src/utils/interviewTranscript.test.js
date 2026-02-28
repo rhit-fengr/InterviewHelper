@@ -1,5 +1,7 @@
 import {
+  buildManualQuestionFromEntries,
   extractManualQuestionFromTranscript,
+  getTranscriptTail,
   buildSessionExportText,
   guessSpeakerLabel,
   normalizeRecognitionLanguages,
@@ -23,6 +25,32 @@ describe('extractManualQuestionFromTranscript', () => {
   it('extracts question line with english question mark', () => {
     const transcript = 'Tell me about your biggest challenge?';
     expect(extractManualQuestionFromTranscript(transcript)).toBe('Tell me about your biggest challenge?');
+  });
+});
+
+describe('getTranscriptTail', () => {
+  it('returns entire transcript when short', () => {
+    expect(getTranscriptTail('hello world', 20)).toBe('hello world');
+  });
+
+  it('returns trailing content when transcript exceeds max chars', () => {
+    expect(getTranscriptTail('1234567890', 4)).toBe('7890');
+  });
+});
+
+describe('buildManualQuestionFromEntries', () => {
+  it('builds prompt from the latest transcript entries only', () => {
+    const result = buildManualQuestionFromEntries([
+      { text: 'line 1' },
+      { text: 'line 2' },
+      { text: 'line 3' },
+      { text: 'line 4?' },
+    ], { maxEntries: 2, maxChars: 100 });
+    expect(result).toBe('line 4?');
+  });
+
+  it('returns empty when entries are missing', () => {
+    expect(buildManualQuestionFromEntries([])).toBe('');
   });
 });
 

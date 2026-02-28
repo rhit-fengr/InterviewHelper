@@ -156,28 +156,13 @@
 .transcript-scroll {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   height: 220px;
   min-height: 120px;
   max-height: 460px;
   overflow-y: auto;
   padding-right: 4px;
   resize: vertical;
-}
-
-.transcript-raw-block {
-  border-top: 1px dashed rgba(148, 163, 184, 0.35);
-  margin-top: 2px;
-  padding-top: 8px;
-}
-
-.raw-transcript-label {
-  display: block;
-  color: #94a3b8;
-  font-size: 10px;
-  letter-spacing: 0.4px;
-  margin-bottom: 4px;
-  text-transform: uppercase;
 }
 
 .transcript-entry {
@@ -221,6 +206,12 @@
   font-size: 12px;
   line-height: 1.45;
   word-break: break-word;
+}
+
+.transcript-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  margin: 0;
 }
 
 .btn-copy {

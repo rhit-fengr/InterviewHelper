@@ -16,6 +16,27 @@ export function extractManualQuestionFromTranscript(transcript = '') {
   return lastLine;
 }
 
+export function getTranscriptTail(transcript = '', maxChars = 1200) {
+  const text = String(transcript || '').trim();
+  if (!text) return '';
+  const limit = Math.max(1, Number(maxChars) || 1200);
+  return text.length <= limit ? text : text.slice(-limit).trim();
+}
+
+export function buildManualQuestionFromEntries(entries = [], {
+  maxEntries = 3,
+  maxChars = 500,
+} = {}) {
+  if (!Array.isArray(entries) || entries.length === 0) return '';
+  const selected = entries.slice(-Math.max(1, Number(maxEntries) || 3));
+  const merged = selected
+    .map((entry) => String(entry?.text || '').trim())
+    .filter(Boolean)
+    .join('\n');
+  if (!merged) return '';
+  return extractManualQuestionFromTranscript(getTranscriptTail(merged, maxChars));
+}
+
 const INTERVIEWER_PATTERNS = [
   /\?$/,
   /？$/,

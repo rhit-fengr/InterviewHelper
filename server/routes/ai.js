@@ -4,11 +4,26 @@ const express = require('express');
 const {
   generateAnswer,
   detectQuestion,
+  getProviderCooldownRemainingMs,
   normalizeProvider,
   isProviderConfigured,
 } = require('../services/openai.service');
 
 const router = express.Router();
+const MAX_QUESTION_CHARS = Number(process.env.AI_MAX_QUESTION_CHARS || 1600);
+const MAX_TRANSCRIPT_CHARS = Number(process.env.AI_MAX_TRANSCRIPT_CHARS || 2400);
+const ENABLE_PROVIDER_FAILOVER = process.env.AI_ENABLE_PROVIDER_FAILOVER !== 'false';
+
+function clipTail(text, maxChars) {
+  const value = String(text || '').trim();
+  if (!value) return '';
+  const limit = Math.max(1, Number(maxChars) || 1600);
+  return value.length <= limit ? value : value.slice(-limit).trim();
+}
+
+function getAlternativeProvider(provider) {
+  return provider === 'gemini' ? 'openai' : 'gemini';
+}
 
 function getProviderFromRequest(req) {
   return normalizeProvider(
@@ -39,27 +54,54 @@ router.post('/answer', async (req, res) => {
     return res.status(400).json({ error: 'question is required' });
   }
 
+  const clippedQuestion = clipTail(question, MAX_QUESTION_CHARS);
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
   let stream;
+  let initError = null;
   try {
     stream = await generateAnswer({
       provider,
-      question,
+      question: clippedQuestion,
       personalInfo,
       answerSettings,
       setup,
       conversationHistory,
     });
   } catch (err) {
-    console.error('[AI answer] stream init error:', err);
+    initError = err;
+    if (ENABLE_PROVIDER_FAILOVER && err?.status === 429) {
+      const fallbackProvider = getAlternativeProvider(provider);
+      if (isProviderConfigured(fallbackProvider)) {
+        try {
+          stream = await generateAnswer({
+            provider: fallbackProvider,
+            question: clippedQuestion,
+            personalInfo,
+            answerSettings,
+            setup,
+            conversationHistory,
+          });
+          console.warn(`[AI answer] failover applied: ${provider} -> ${fallbackProvider}`);
+        } catch (fallbackErr) {
+          initError = fallbackErr;
+        }
+      }
+    }
+  }
+
+  if (!stream) {
+    const cooldownMs = initError?.retryAfterMs || getProviderCooldownRemainingMs(initError?.provider || provider);
+    const cooldownSeconds = Math.max(1, Math.ceil(cooldownMs / 1000));
+    console.error('[AI answer] stream init error:', initError);
     let userMessage = 'Failed to start answer generation';
-    if (err?.status === 429) {
-      userMessage = 'Rate limit reached. Please wait a moment and try again.';
-    } else if (provider === 'gemini' && err?.status === 400) {
+    if (initError?.status === 429) {
+      userMessage = `Rate limit reached for ${initError?.provider || provider}. Wait about ${cooldownSeconds}s and try again, or switch AI Provider.`;
+    } else if ((initError?.provider || provider) === 'gemini' && initError?.status === 400) {
       userMessage = 'Gemini rejected this request (400). Check your request parameters and Gemini configuration (e.g., GEMINI_MODEL, GEMINI_API_KEY) and try again.';
     }
     res.write(`data: ${JSON.stringify({ error: userMessage })}\n\n`);
@@ -113,7 +155,11 @@ router.post('/detect-question', async (req, res) => {
   }
 
   try {
-    const result = await detectQuestion(transcript, sensitivity, provider);
+    const result = await detectQuestion(
+      clipTail(transcript, MAX_TRANSCRIPT_CHARS),
+      sensitivity,
+      provider
+    );
     res.json(result);
   } catch (err) {
     console.error('[AI detect-question] error:', err);

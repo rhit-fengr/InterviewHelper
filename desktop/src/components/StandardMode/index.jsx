@@ -4,8 +4,10 @@ import { useTranscript } from '../../hooks/useTranscript';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
 import { LANGUAGES } from '../../constants';
 import {
+  buildManualQuestionFromEntries,
   buildSessionExportText,
   extractManualQuestionFromTranscript,
+  getTranscriptTail,
   guessSpeakerLabel,
 } from '../../utils/interviewTranscript';
 import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnswer';
@@ -104,7 +106,7 @@ export default function StandardMode({ onBack }) {
     clearTimeout(detectionTimeoutRef.current);
     // Debounce question detection — wait 1.5s of silence before checking
     detectionTimeoutRef.current = setTimeout(() => {
-      runQuestionDetection(text);
+      runQuestionDetection(getTranscriptTail(text, 1200));
     }, 1500);
   }, [runQuestionDetection]);
 
@@ -150,7 +152,9 @@ export default function StandardMode({ onBack }) {
   };
 
   const handleManualAnswer = () => {
-    const manualQuestion = extractManualQuestionFromTranscript(transcript);
+    const manualQuestion =
+      buildManualQuestionFromEntries(transcriptEntries, { maxEntries: 3, maxChars: 500 }) ||
+      extractManualQuestionFromTranscript(getTranscriptTail(transcript, 500));
     if (!manualQuestion) return;
     setLastQuestion(manualQuestion);
     triggerAnswerGeneration(manualQuestion);
@@ -178,7 +182,7 @@ export default function StandardMode({ onBack }) {
   useEffect(() => {
     if (!transcriptScrollRef.current) return;
     transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
-  }, [transcriptEntries, transcript]);
+  }, [transcriptEntries.length]);
 
   // Save completed conversation turn (user question + assistant answer) to history
   useEffect(() => {
@@ -290,7 +294,7 @@ export default function StandardMode({ onBack }) {
           </div>
 
           <div className="transcript-scroll" ref={transcriptScrollRef}>
-            {transcriptEntries.length > 0 && (
+            {transcriptEntries.length > 0 ? (
               <div className="transcript-entry-list">
                 {transcriptEntries.slice(-150).map((entry, idx) => (
                   <div key={`${entry.timestamp}-${idx}`} className="transcript-entry">
@@ -302,11 +306,9 @@ export default function StandardMode({ onBack }) {
                   </div>
                 ))}
               </div>
+            ) : (
+              <p className="transcript-empty">{isRunning ? 'Listening...' : 'No transcript yet.'}</p>
             )}
-            <div className="transcript-raw-block">
-              <span className="raw-transcript-label">Live Combined Transcript</span>
-              <p className="transcript-text">{transcript || (isRunning ? 'Listening...' : 'No transcript yet.')}</p>
-            </div>
           </div>
         </div>
       )}
@@ -325,7 +327,7 @@ export default function StandardMode({ onBack }) {
         </div>
       )}
 
-      {isRunning && transcript.trim() && (
+      {isRunning && (transcriptEntries.length > 0 || transcript.trim()) && (
         <div className="control-bar">
           <button className="btn-answer-wide" onClick={handleManualAnswer} disabled={isLoading}>
             💡 Answer Current Transcript

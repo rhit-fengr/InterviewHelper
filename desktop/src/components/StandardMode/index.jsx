@@ -233,7 +233,7 @@ export default function StandardMode({ onBack }) {
         </div>
       )}
 
-      {!session.autoAnswer && isRunning && !lastQuestion && transcript.trim() && (
+      {!session.autoAnswer && isRunning && transcript.trim() && (
         <div className="control-bar">
           <button className="btn-answer-wide" onClick={handleManualAnswer} disabled={isLoading}>
             💡 Answer Current Transcript

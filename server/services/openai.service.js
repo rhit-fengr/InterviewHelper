@@ -8,11 +8,18 @@ const DEFAULT_PROVIDER = normalizeProvider(process.env.AI_PROVIDER || 'openai');
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const OPENAI_DETECT_MODEL = process.env.OPENAI_DETECT_MODEL || 'gpt-4o-mini';
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || GEMINI_MODEL;
-const GEMINI_BASE_URL =
-  (process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai')
-    .replace(/\/+$/, '');
+const GEMINI_BASE_URL = ensureTrailingSlash(
+  process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/'
+);
+const GEMINI_FALLBACK_MODELS = (
+  process.env.GEMINI_FALLBACK_MODELS ||
+  'gemini-2.0-flash,gemini-1.5-flash'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 /**
  * Backward-compatible flag: whether OPENAI_API_KEY exists.
@@ -35,6 +42,15 @@ const TOKEN_LIMITS = {
   medium: 500,
   long: 1000,
 };
+const RATE_LIMIT_COOLDOWN_MS = Number(process.env.AI_RATE_LIMIT_COOLDOWN_MS || 60_000);
+/** provider -> epoch ms */
+const providerCooldownUntil = new Map();
+
+function ensureTrailingSlash(url) {
+  return typeof url === 'string' && !url.endsWith('/')
+    ? `${url}/`
+    : url;
+}
 
 function normalizeProvider(raw) {
   if (!raw || typeof raw !== 'string') return 'openai';
@@ -79,6 +95,45 @@ function getAnswerModel(provider) {
 function getDetectModel(provider) {
   const p = normalizeProvider(provider);
   return p === 'gemini' ? GEMINI_DETECT_MODEL : OPENAI_DETECT_MODEL;
+}
+
+function isGeminiBadRequest(err) {
+  return err?.status === 400;
+}
+
+function buildGeminiModelCandidates(primary) {
+  return [...new Set([primary, ...GEMINI_FALLBACK_MODELS])];
+}
+
+function parseRetryAfterMs(headers = {}) {
+  const raw = headers?.['retry-after'];
+  if (!raw) return 0;
+  const asNumber = Number(raw);
+  if (!Number.isNaN(asNumber) && asNumber > 0) {
+    return asNumber * 1000;
+  }
+  const asDate = Date.parse(raw);
+  if (!Number.isNaN(asDate)) {
+    return Math.max(0, asDate - Date.now());
+  }
+  return 0;
+}
+
+function markProviderRateLimited(provider, err) {
+  const retryAfterMs = parseRetryAfterMs(err?.headers);
+  const cooldownMs = Math.max(RATE_LIMIT_COOLDOWN_MS, retryAfterMs);
+  providerCooldownUntil.set(provider, Date.now() + cooldownMs);
+}
+
+function isProviderOnCooldown(provider) {
+  const until = providerCooldownUntil.get(provider) || 0;
+  return until > Date.now();
+}
+
+function buildRateLimitError(provider) {
+  const err = new Error(`Provider "${provider}" is temporarily rate-limited.`);
+  err.status = 429;
+  return err;
 }
 
 function sanitizeMessages(messages) {
@@ -129,6 +184,9 @@ async function generateAnswer({
   conversationHistory = [],
 }) {
   const selectedProvider = normalizeProvider(provider || setup?.aiProvider);
+  if (isProviderOnCooldown(selectedProvider)) {
+    throw buildRateLimitError(selectedProvider);
+  }
   const client = getClient(selectedProvider);
   const systemPrompt = buildSystemPrompt(personalInfo, answerSettings, setup);
   const maxTokens = TOKEN_LIMITS[answerSettings?.answerLength] || TOKEN_LIMITS.medium;
@@ -153,20 +211,49 @@ async function generateAnswer({
   } catch (err) {
     // Gemini's OpenAI-compatible endpoint can return HTTP 400 for payloads that are valid for
     // OpenAI (e.g., long or complex conversation histories or certain role combinations).
-    // In that case, retry with a minimal payload (only system + current user messages, no extra
-      const minimalMessages = [
-        messages[0],
-        messages[messages.length - 1],
-      ];
-      const minimalPayload = {
-        model: getAnswerModel(selectedProvider),
-        messages: minimalMessages,
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: question },
-        ]),
-        stream: true,
-      };
-      return client.chat.completions.create(minimalPayload);
+    // In that case, retry with model/payload fallbacks to maximize compatibility.
+    if (err?.status === 429) {
+      markProviderRateLimited(selectedProvider, err);
+      throw err;
+    }
+
+    if (selectedProvider === 'gemini' && isGeminiBadRequest(err)) {
+      const candidates = buildGeminiModelCandidates(getAnswerModel(selectedProvider));
+      const minimalWithSystem = sanitizeMessages([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: question },
+      ]);
+      const userOnly = sanitizeMessages([{ role: 'user', content: question }]);
+
+      for (const model of candidates) {
+        try {
+          return await client.chat.completions.create({
+            model,
+            messages: minimalWithSystem,
+            stream: true,
+          });
+        } catch (retryErr) {
+          if (retryErr?.status === 429) {
+            markProviderRateLimited(selectedProvider, retryErr);
+            throw retryErr;
+          }
+          if (!isGeminiBadRequest(retryErr)) throw retryErr;
+        }
+
+        try {
+          return await client.chat.completions.create({
+            model,
+            messages: userOnly,
+            stream: true,
+          });
+        } catch (retryErr) {
+          if (retryErr?.status === 429) {
+            markProviderRateLimited(selectedProvider, retryErr);
+            throw retryErr;
+          }
+          if (!isGeminiBadRequest(retryErr)) throw retryErr;
+        }
+      }
     }
     throw err;
   }
@@ -194,6 +281,9 @@ function tryParseJson(raw) {
  */
 async function detectQuestion(transcript, sensitivity = 'medium', provider) {
   const selectedProvider = normalizeProvider(provider);
+  if (isProviderOnCooldown(selectedProvider)) {
+    return heuristicQuestionDetection(transcript);
+  }
   const client = getClient(selectedProvider);
   const sensitivityPrompts = {
     low: 'Only return true if there is a very clear, explicit question with a question mark.',
@@ -214,7 +304,21 @@ async function detectQuestion(transcript, sensitivity = 'medium', provider) {
     requestPayload.max_tokens = 150;
   }
 
-  const response = await client.chat.completions.create(requestPayload);
+  let response;
+  try {
+    response = await client.chat.completions.create(requestPayload);
+  } catch (err) {
+    if (err?.status === 429) {
+      markProviderRateLimited(selectedProvider, err);
+      return heuristicQuestionDetection(transcript);
+    }
+
+    if (selectedProvider === 'gemini' && isGeminiBadRequest(err)) {
+      console.warn('[detectQuestion] Gemini returned 400; using heuristic fallback.');
+      return heuristicQuestionDetection(transcript);
+    }
+    throw err;
+  }
 
   const raw = response.choices?.[0]?.message?.content || '';
   const parsed = tryParseJson(raw);
@@ -229,6 +333,10 @@ async function detectQuestion(transcript, sensitivity = 'medium', provider) {
   // Fallback: basic heuristic based on position of the last '?' and log usage for monitoring.
   console.warn('[detectQuestion] Falling back to heuristic question detection; raw response was not valid JSON:', raw);
 
+  return heuristicQuestionDetection(transcript);
+}
+
+function heuristicQuestionDetection(transcript) {
   const text = typeof transcript === 'string' ? transcript.trim() : '';
   let fallbackIsQuestion = false;
   let fallbackQuestion = null;

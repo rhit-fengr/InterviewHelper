@@ -99,7 +99,7 @@ describe('AI answer streaming route', () => {
       .send({ question: 'Tell me about yourself', provider: 'gemini' });
 
     expect(res.status).toBe(200);
-    expect(res.text).toContain('data: {"error":"Gemini rejected this request (400). Check GEMINI_MODEL/GEMINI_API_KEY and try again."}\n\n');
+    expect(res.text).toContain('data: {"error":"Gemini rejected this request (400). Check your request parameters and Gemini configuration (e.g., GEMINI_MODEL, GEMINI_API_KEY) and try again."}\n\n');
     expect(errorSpy).toHaveBeenCalledWith(
       '[AI answer] stream init error:',
       expect.any(Error)

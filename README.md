@@ -303,6 +303,14 @@ Output is in `desktop/out/`.
 
 **"Rate limit reached" error**
 - Your OpenAI account has hit its per-minute token limit. Wait a few seconds and try again, or upgrade your OpenAI usage tier.
+- The server now applies provider-level cooldown (`AI_RATE_LIMIT_COOLDOWN_MS`, default 60s) after a 429 to avoid repeatedly hammering the API.
+- During cooldown, question detection automatically falls back to heuristic parsing instead of calling the model.
+
+**"Gemini rejected this request (400)" error**
+- Verify `AI_PROVIDER=gemini` and `GEMINI_API_KEY` are set in `server/.env`.
+- Use a broadly available model first, e.g. `GEMINI_MODEL=gemini-2.0-flash`.
+- Optionally set fallbacks, e.g. `GEMINI_FALLBACK_MODELS=gemini-1.5-flash`.
+- Restart the server after changing environment variables.
 
 **Mobile app cannot connect**
 - Ensure the device is on the same network as the server.

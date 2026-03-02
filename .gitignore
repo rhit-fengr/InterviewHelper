@@ -20,3 +20,4 @@ desktop/package-lock.json
 local-whisper-service/.venv/
 local-whisper-service/__pycache__/
 local-whisper-service/*.pyc
+local-whisper-service/txt.txt

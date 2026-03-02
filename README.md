@@ -102,6 +102,9 @@ LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8765/transcribe
 
 You can also run `local-whisper-service/start_local_whisper.bat` on Windows.
 
+In Electron runtime, when `audioInputMode=Mic + System` and `Transcription Provider` is `Auto` or `Local`, the app now attempts to auto-start local-whisper service and auto-release it when you stop listening.
+If needed, you can point Electron's health check to a different local port with `LOCAL_WHISPER_HEALTH_URL` (desktop app process env).
+
 ### 2. Start the desktop app
 
 ```bash
@@ -343,6 +346,7 @@ Subtitle-plugin evolution plan:
 - If using `OpenAI` transcription, set `OPENAI_API_KEY` in `server/.env`.
 - If you intentionally use `Gemini` transcription, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).
 - For non-cloud setup, start `local-whisper-service`, configure `LOCAL_TRANSCRIBE_URL`, and choose `Local Whisper Service` (or `Auto`).
+- If `start_local_whisper.bat` appears to do nothing, open `cmd` first and run it there to read the error; most common root causes are missing Python or failed pip install.
 
 **App feels laggy or buttons are unresponsive in Chrome**
 - Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.

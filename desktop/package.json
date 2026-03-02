@@ -44,6 +44,18 @@
       "output": "out"
     },
     "files": ["electron/**/*", "build/**/*"],
+    "extraResources": [
+      {
+        "from": "../local-whisper-service",
+        "to": "local-whisper-service",
+        "filter": [
+          "app.py",
+          "requirements.txt",
+          "start_local_whisper.bat",
+          "README.md"
+        ]
+      }
+    ],
     "mac": {
       "category": "public.app-category.productivity"
     },

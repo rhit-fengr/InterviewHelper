@@ -1,10 +1,182 @@
 'use strict';
 
 const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } = require('electron');
+const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 let mainWindow;
+let localWhisperProcess = null;
+let localWhisperManaged = false;
+let localWhisperLeaseCount = 0;
+let localWhisperStartPromise = null;
+
+const LOCAL_WHISPER_HEALTH_URL = String(
+  process.env.LOCAL_WHISPER_HEALTH_URL || 'http://127.0.0.1:8765/health'
+).trim();
+const LOCAL_WHISPER_START_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.LOCAL_WHISPER_START_TIMEOUT_MS || 90_000)
+);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getLocalWhisperPortFromHealthUrl() {
+  try {
+    const parsed = new URL(LOCAL_WHISPER_HEALTH_URL);
+    return parsed.port || '8765';
+  } catch {
+    return '8765';
+  }
+}
+
+function resolveLocalWhisperScriptPath() {
+  if (isDev) {
+    return path.resolve(__dirname, '../../local-whisper-service/start_local_whisper.bat');
+  }
+  return path.join(process.resourcesPath, 'local-whisper-service', 'start_local_whisper.bat');
+}
+
+async function isLocalWhisperHealthy() {
+  try {
+    const res = await fetch(LOCAL_WHISPER_HEALTH_URL, { method: 'GET' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function stopManagedLocalWhisper() {
+  if (!localWhisperManaged || !localWhisperProcess) return;
+
+  const pid = localWhisperProcess.pid;
+  localWhisperProcess = null;
+  localWhisperManaged = false;
+
+  if (!pid) return;
+  try {
+    spawn('taskkill', ['/pid', String(pid), '/t', '/f'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+  } catch {
+    // Ignore kill errors.
+  }
+}
+
+function spawnLocalWhisperProcess() {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      message: 'Auto local-whisper start is currently implemented for Windows packaging/runtime.',
+    };
+  }
+
+  const scriptPath = resolveLocalWhisperScriptPath();
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      ok: false,
+      message: `Local whisper launcher not found: ${scriptPath}`,
+    };
+  }
+
+  const command = `""${scriptPath}" --quiet"`;
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
+    cwd: path.dirname(scriptPath),
+    env: {
+      ...process.env,
+      LOCAL_WHISPER_PORT: getLocalWhisperPortFromHealthUrl(),
+    },
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stdout?.on('data', (buf) => {
+    const text = String(buf || '').trim();
+    if (text) console.log('[local-whisper]', text);
+  });
+  child.stderr?.on('data', (buf) => {
+    const text = String(buf || '').trim();
+    if (text) console.error('[local-whisper]', text);
+  });
+
+  child.once('exit', (code) => {
+    const exitedPid = child.pid;
+    if (localWhisperProcess && localWhisperProcess.pid === exitedPid) {
+      localWhisperProcess = null;
+      localWhisperManaged = false;
+    }
+    if (code !== 0) {
+      console.error(`[local-whisper] launcher exited with code ${code}`);
+    }
+  });
+
+  localWhisperProcess = child;
+  localWhisperManaged = true;
+  return { ok: true };
+}
+
+async function ensureLocalWhisper() {
+  localWhisperLeaseCount += 1;
+
+  if (await isLocalWhisperHealthy()) {
+    return {
+      ok: true,
+      status: localWhisperManaged ? 'managed-running' : 'external-running',
+      leaseCount: localWhisperLeaseCount,
+    };
+  }
+
+  if (!localWhisperStartPromise) {
+    localWhisperStartPromise = (async () => {
+      const spawnResult = spawnLocalWhisperProcess();
+      if (!spawnResult.ok) {
+        throw new Error(spawnResult.message || 'Failed to start local whisper service.');
+      }
+      const deadline = Date.now() + LOCAL_WHISPER_START_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (await isLocalWhisperHealthy()) return true;
+        await sleep(1_000);
+      }
+      throw new Error('Timed out waiting for local whisper service health check.');
+    })().finally(() => {
+      localWhisperStartPromise = null;
+    });
+  }
+
+  try {
+    await localWhisperStartPromise;
+    return {
+      ok: true,
+      status: 'managed-started',
+      leaseCount: localWhisperLeaseCount,
+    };
+  } catch (err) {
+    localWhisperLeaseCount = Math.max(0, localWhisperLeaseCount - 1);
+    stopManagedLocalWhisper();
+    return {
+      ok: false,
+      status: 'failed',
+      leaseCount: localWhisperLeaseCount,
+      message: err?.message || 'Failed to start local whisper service.',
+    };
+  }
+}
+
+function releaseLocalWhisper() {
+  localWhisperLeaseCount = Math.max(0, localWhisperLeaseCount - 1);
+  if (localWhisperLeaseCount === 0) {
+    stopManagedLocalWhisper();
+  }
+  return {
+    ok: true,
+    status: localWhisperManaged ? 'managed-running' : 'idle',
+    leaseCount: localWhisperLeaseCount,
+  };
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -88,7 +260,13 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopManagedLocalWhisper();
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  localWhisperLeaseCount = 0;
+  stopManagedLocalWhisper();
 });
 
 // ── IPC: Window control ────────────────────────────────────────────────────
@@ -142,3 +320,14 @@ ipcMain.handle('set-zoom-factor', withWindow((_event, factor) => {
 ipcMain.handle('open-external', (_event, url) => {
   shell.openExternal(url);
 });
+
+ipcMain.handle('ensure-local-whisper', async () => ensureLocalWhisper());
+
+ipcMain.handle('release-local-whisper', async () => releaseLocalWhisper());
+
+ipcMain.handle('local-whisper-status', async () => ({
+  healthy: await isLocalWhisperHealthy(),
+  managed: localWhisperManaged,
+  leaseCount: localWhisperLeaseCount,
+  healthUrl: LOCAL_WHISPER_HEALTH_URL,
+}));

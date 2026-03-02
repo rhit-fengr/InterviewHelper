@@ -80,6 +80,7 @@ export function useDualAudioTranscript({
   const onFinalSegmentRef = useRef(onFinalSegment);
   const enabledRef = useRef(enabled);
   const uploadQueueRef = useRef(Promise.resolve());
+  const localWhisperLeaseRef = useRef(false);
 
   useEffect(() => {
     onChangeRef.current = onTranscriptChange;
@@ -119,6 +120,13 @@ export function useDualAudioTranscript({
     if (systemStreamRef.current) {
       systemStreamRef.current.getTracks().forEach((track) => track.stop());
       systemStreamRef.current = null;
+    }
+
+    if (localWhisperLeaseRef.current && window?.electronAPI?.releaseLocalWhisper) {
+      localWhisperLeaseRef.current = false;
+      window.electronAPI.releaseLocalWhisper().catch(() => {
+        // Ignore release errors; service will still be cleaned up on app quit.
+      });
     }
 
     setIsListening(false);
@@ -184,6 +192,22 @@ export function useDualAudioTranscript({
     const start = async () => {
       try {
         setError(null);
+
+        const normalizedTranscribeProvider = String(transcribeProvider || 'auto').trim().toLowerCase();
+        const shouldEnsureLocalService = (
+          normalizedTranscribeProvider === 'local' ||
+          normalizedTranscribeProvider === 'auto'
+        );
+
+        if (shouldEnsureLocalService && window?.electronAPI?.ensureLocalWhisper) {
+          const localResult = await window.electronAPI.ensureLocalWhisper();
+          if (localResult?.ok) {
+            localWhisperLeaseRef.current = true;
+          } else if (normalizedTranscribeProvider === 'local') {
+            throw new Error(localResult?.message || 'Failed to start local Whisper service.');
+          }
+        }
+
         if (!navigator?.mediaDevices?.getUserMedia || !navigator?.mediaDevices?.getDisplayMedia) {
           throw new Error('Browser does not support required media capture APIs.');
         }

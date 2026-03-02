@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -36,6 +36,25 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      const preferredSource = sources.find((source) => source.name === 'Entire Screen') || sources[0];
+      if (!preferredSource) {
+        callback({ video: null, audio: null });
+        return;
+      }
+      const response = { video: preferredSource };
+      if (process.platform === 'win32') {
+        // Windows loopback captures system output audio for meeting/interviewer speech.
+        response.audio = 'loopback';
+      }
+      callback(response);
+    } catch {
+      callback({ video: null, audio: null });
+    }
+  }, { useSystemPicker: true });
+
   createWindow();
 
   app.on('activate', () => {

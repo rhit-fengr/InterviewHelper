@@ -1,13 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
+import { useDualAudioTranscript } from '../../hooks/useDualAudioTranscript';
 import { useSocketSync } from '../../hooks/useSocketSync';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
 import { useTranscript } from '../../hooks/useTranscript';
-import { guessSpeakerLabel } from '../../utils/interviewTranscript';
+import { getTranscriptTail, guessSpeakerLabel } from '../../utils/interviewTranscript';
 import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnswer';
 import './UndetectableMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
+const LIVE_TRANSCRIPT_LINES = 3;
+const LIVE_TRANSCRIPT_MAX_CHARS = 600;
+
+function getRecentTranscriptLines(text, maxLines = LIVE_TRANSCRIPT_LINES, maxChars = LIVE_TRANSCRIPT_MAX_CHARS) {
+  const value = String(text || '').trim();
+  if (!value) return '';
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-Math.max(1, Number(maxLines) || LIVE_TRANSCRIPT_LINES));
+  return getTranscriptTail(lines.join('\n'), maxChars);
+}
 
 function generateSessionCode() {
   const words = ['IRON', 'APEX', 'BOLT', 'NOVA', 'JADE', 'ECHO', 'FLUX', 'GRID'];
@@ -110,27 +124,54 @@ export default function UndetectableMode({ onBack }) {
   }, [triggerAnswerGeneration]);
 
   const handleTranscriptUpdate = useCallback((text) => {
+    const transcriptPreview = getRecentTranscriptLines(text);
     // Forward transcript to mobile
-    if (clientConnected) {
-      streamTranscript(sessionCode, text, {
+    if (clientConnected && transcriptPreview) {
+      streamTranscript(sessionCode, transcriptPreview, {
         language: activeLanguageRef.current,
-        speaker: guessSpeakerLabel(text),
+        speaker: guessSpeakerLabel(transcriptPreview),
       });
     }
     // Auto-detect question and generate answer if enabled
     if (sessionRef.current.autoAnswer) {
       clearTimeout(detectionTimeoutRef.current);
       detectionTimeoutRef.current = setTimeout(() => {
-        runQuestionDetection(text);
+        runQuestionDetection(getTranscriptTail(text, 1200));
       }, 1500);
     }
   }, [clientConnected, sessionCode, streamTranscript, runQuestionDetection]);
 
-  const { transcript, activeLanguage } = useTranscript({
-    enabled: isRunning,
-    language: Array.isArray(setup.interviewLangs) ? setup.interviewLangs : [setup.interviewLang || 'en-US'],
+  const audioInputMode = session.audioInputMode || 'mic';
+  const interviewLangs = Array.isArray(setup.interviewLangs)
+    ? setup.interviewLangs
+    : [setup.interviewLang || 'en-US'];
+
+  const speechTranscript = useTranscript({
+    enabled: isRunning && audioInputMode === 'mic',
+    language: interviewLangs,
     onTranscriptChange: handleTranscriptUpdate,
   });
+
+  const dualAudioTranscript = useDualAudioTranscript({
+    enabled: isRunning && audioInputMode === 'mic-system',
+    language: interviewLangs,
+    provider: setup.aiProvider,
+    onTranscriptChange: handleTranscriptUpdate,
+  });
+
+  const transcript = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.transcript
+    : speechTranscript.transcript;
+  const transcriptPreview = getRecentTranscriptLines(transcript);
+  const activeLanguage = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.activeLanguage
+    : speechTranscript.activeLanguage;
+  const transcriptError = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.error
+    : speechTranscript.error;
+  const isListening = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.isListening
+    : speechTranscript.isListening;
 
   useEffect(() => {
     activeLanguageRef.current = activeLanguage || activeLanguageRef.current;
@@ -167,6 +208,8 @@ export default function UndetectableMode({ onBack }) {
       const next = !prev;
       if (!next) {
         pendingQuestionRef.current = null;
+        speechTranscript.clearTranscript();
+        dualAudioTranscript.clearTranscript();
       } else {
         lastAutoAnswerRef.current = null;
       }
@@ -254,7 +297,7 @@ export default function UndetectableMode({ onBack }) {
           onClick={handleStartStop}
           disabled={!clientConnected}
         >
-          {isRunning ? '⏹ Stop' : '🎙️ Start Listening'}
+          {isRunning ? '⏹ Stop' : `🎙️ Start Listening (${audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic'})`}
         </button>
 
         {clientConnected && (
@@ -268,10 +311,17 @@ export default function UndetectableMode({ onBack }) {
       </div>
 
       {/* Live transcript preview (desktop side only) */}
-      {session.showTranscript && isRunning && transcript && (
+      {session.showTranscript && isRunning && transcriptPreview && (
         <div className="transcript-preview">
-          <span className="box-label">🎤 Live</span>
-          <p className="transcript-text">{transcript}</p>
+          <span className="box-label">🎤 Live ({isListening ? 'listening' : 'idle'})</span>
+          <p className="transcript-text">{transcriptPreview}</p>
+        </div>
+      )}
+
+      {transcriptError && (
+        <div className="instructions-box">
+          <h4 className="instructions-title">Audio Capture Error</h4>
+          <p className="transcript-text">{transcriptError}</p>
         </div>
       )}
 

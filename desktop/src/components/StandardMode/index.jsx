@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
+import { useDualAudioTranscript } from '../../hooks/useDualAudioTranscript';
 import { useTranscript } from '../../hooks/useTranscript';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
 import { LANGUAGES } from '../../constants';
@@ -114,33 +115,49 @@ export default function StandardMode({ onBack }) {
   const interviewLangs = Array.isArray(setup.interviewLangs)
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
+  const audioInputMode = session.audioInputMode || 'mic';
 
-  const {
-    transcript,
-    isListening,
-    error: transcriptError,
-    activeLanguage,
-    clearTranscript,
-  } = useTranscript({
-    // Always enable transcript when running so the manual "Answer" button and custom input work
-    // even when both showTranscript and autoAnswer are off.
-    enabled: isRunning,
+  const handleFinalSegment = useCallback(({ text, language: segmentLanguage, timestamp }) => {
+    const speaker = guessSpeakerLabel(text);
+    setTranscriptEntries((prev) => ([
+      ...prev,
+      {
+        text,
+        language: segmentLanguage,
+        speaker,
+        timestamp,
+      },
+    ].slice(-500)));
+  }, []);
+
+  const webSpeechTranscript = useTranscript({
+    enabled: isRunning && audioInputMode === 'mic',
     language: interviewLangs,
     onTranscriptChange: handleTranscriptUpdate,
-    onFinalSegment: ({ text, language: segmentLanguage, timestamp }) => {
-      const speaker = guessSpeakerLabel(text);
-      setTranscriptEntries((prev) => ([
-        ...prev,
-        {
-          text,
-          language: segmentLanguage,
-          speaker,
-          timestamp,
-        },
-      ].slice(-500)));
-    },
+    onFinalSegment: handleFinalSegment,
     rotationIntervalMs: 8000,
   });
+
+  const dualAudioTranscript = useDualAudioTranscript({
+    enabled: isRunning && audioInputMode === 'mic-system',
+    language: interviewLangs,
+    provider: setup.aiProvider,
+    onTranscriptChange: handleTranscriptUpdate,
+    onFinalSegment: handleFinalSegment,
+  });
+
+  const transcript = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.transcript
+    : webSpeechTranscript.transcript;
+  const isListening = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.isListening
+    : webSpeechTranscript.isListening;
+  const transcriptError = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.error
+    : webSpeechTranscript.error;
+  const activeLanguage = audioInputMode === 'mic-system'
+    ? dualAudioTranscript.activeLanguage
+    : webSpeechTranscript.activeLanguage;
 
   const handleCustomSubmit = (e) => {
     e.preventDefault();
@@ -169,7 +186,8 @@ export default function StandardMode({ onBack }) {
     } else {
       setIsRunning(true);
       clearAnswer();
-      clearTranscript();
+      webSpeechTranscript.clearTranscript();
+      dualAudioTranscript.clearTranscript();
       setTranscriptEntries([]);
       lastAutoAnswerRef.current = null;
     }
@@ -264,7 +282,8 @@ export default function StandardMode({ onBack }) {
               clearTimeout(detectionTimeoutRef.current);
               detectionTimeoutRef.current = null;
               clearAnswer();
-              clearTranscript();
+              webSpeechTranscript.clearTranscript();
+              dualAudioTranscript.clearTranscript();
               setLastQuestion('');
               setTranscriptEntries([]);
             }}
@@ -288,8 +307,9 @@ export default function StandardMode({ onBack }) {
           <div className="box-label-row">
             <span className="box-label">🎤 Transcript</span>
             <span className="transcript-lang-badge">
+              Source: {audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic only'} |{' '}
               Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
-              {interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
+              {audioInputMode === 'mic' && interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
             </span>
           </div>
 

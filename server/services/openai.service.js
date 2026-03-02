@@ -7,6 +7,8 @@ const DEFAULT_PROVIDER = normalizeProvider(process.env.AI_PROVIDER || 'openai');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const OPENAI_DETECT_MODEL = process.env.OPENAI_DETECT_MODEL || 'gpt-4o-mini';
+const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
+const AI_TRANSCRIBE_MAX_BYTES = Number(process.env.AI_TRANSCRIBE_MAX_BYTES || 5 * 1024 * 1024);
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || GEMINI_MODEL;
@@ -155,6 +157,21 @@ function sanitizeMessages(messages) {
     .filter((m) => m.content.trim().length > 0);
 }
 
+function inferExtensionFromMime(mimeType = '') {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.includes('mp4')) return 'mp4';
+  if (normalized.includes('mpeg')) return 'mp3';
+  if (normalized.includes('wav')) return 'wav';
+  return 'webm';
+}
+
+function sanitizeLanguageHint(languageHint) {
+  const candidate = String(languageHint || '').trim();
+  if (!candidate) return '';
+  // Keep BCP-47-ish values only.
+  return /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(candidate) ? candidate : '';
+}
+
 /**
  * Build a system prompt personalised for the candidate.
  */
@@ -263,6 +280,67 @@ async function generateAnswer({
           if (!isGeminiBadRequest(retryErr)) throw retryErr;
         }
       }
+    }
+    throw err;
+  }
+}
+
+async function transcribeAudioChunk({
+  provider,
+  audioBuffer,
+  mimeType = 'audio/webm',
+  languageHint,
+}) {
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    const err = new Error('audio chunk is required');
+    err.status = 400;
+    throw err;
+  }
+
+  if (audioBuffer.length > AI_TRANSCRIBE_MAX_BYTES) {
+    const err = new Error(`audio chunk exceeds max size (${AI_TRANSCRIBE_MAX_BYTES} bytes)`);
+    err.status = 413;
+    throw err;
+  }
+
+  const selectedProvider = normalizeProvider(provider);
+  // Transcription currently relies on OpenAI Audio API for compatibility/stability.
+  if (!isConfigured) {
+    const err = new Error(
+      selectedProvider === 'gemini'
+        ? 'Audio transcription currently requires OPENAI_API_KEY even when Gemini is selected.'
+        : 'Audio transcription requires OPENAI_API_KEY.'
+    );
+    err.status = 503;
+    throw err;
+  }
+
+  const transcriptionProvider = 'openai';
+  if (isProviderOnCooldown(transcriptionProvider)) {
+    throw buildRateLimitError(transcriptionProvider);
+  }
+
+  const client = getClient(transcriptionProvider);
+  const file = await OpenAI.toFile(
+    audioBuffer,
+    `chunk.${inferExtensionFromMime(mimeType)}`,
+    { type: mimeType || 'audio/webm' }
+  );
+
+  const payload = {
+    file,
+    model: OPENAI_TRANSCRIBE_MODEL,
+  };
+  const normalizedLang = sanitizeLanguageHint(languageHint);
+  if (normalizedLang) payload.language = normalizedLang;
+
+  try {
+    const result = await client.audio.transcriptions.create(payload);
+    return String(result?.text || '').trim();
+  } catch (err) {
+    if (err?.status === 429) {
+      markProviderRateLimited(transcriptionProvider, err);
+      throw buildRateLimitError(transcriptionProvider);
     }
     throw err;
   }
@@ -385,6 +463,7 @@ function heuristicQuestionDetection(transcript) {
 module.exports = {
   generateAnswer,
   detectQuestion,
+  transcribeAudioChunk,
   buildSystemPrompt,
   normalizeProvider,
   isProviderConfigured,

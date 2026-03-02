@@ -3,6 +3,7 @@
 jest.mock('../services/openai.service', () => ({
   generateAnswer: jest.fn(),
   detectQuestion: jest.fn(),
+  transcribeAudioChunk: jest.fn(),
   getProviderCooldownRemainingMs: jest.fn(() => 30_000),
   normalizeProvider: jest.fn((provider) => provider || 'openai'),
   isProviderConfigured: jest.fn(() => true),
@@ -16,6 +17,7 @@ const {
   getProviderCooldownRemainingMs,
   isProviderConfigured,
   normalizeProvider,
+  transcribeAudioChunk,
 } = require('../services/openai.service');
 
 describe('AI answer streaming route', () => {
@@ -172,5 +174,68 @@ describe('AI answer streaming route', () => {
     const questionSent = generateAnswer.mock.calls[0][0].question;
     expect(questionSent.length).toBeLessThanOrEqual(1600);
     expect(questionSent.endsWith('-tail')).toBe(true);
+  });
+});
+
+describe('AI transcribe chunk route', () => {
+  let app;
+
+  beforeEach(() => {
+    app = express();
+    app.use(express.json());
+    app.use('/api/ai', aiRouter);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    normalizeProvider.mockImplementation((provider) => provider || 'openai');
+  });
+
+  it('returns 400 when chunk is missing', async () => {
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('audio chunk is required');
+  });
+
+  it('returns transcribed text for uploaded chunk', async () => {
+    transcribeAudioChunk.mockResolvedValue('hello interviewer');
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .field('language', 'en-US')
+      .field('sourceMode', 'mic-system')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('hello interviewer');
+    expect(res.body.sourceMode).toBe('mic-system');
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai',
+      mimeType: 'audio/webm',
+      languageHint: 'en-US',
+      audioBuffer: expect.any(Buffer),
+    }));
+  });
+
+  it('returns 429 with cooldown guidance for transcription rate limit', async () => {
+    transcribeAudioChunk.mockRejectedValue(Object.assign(
+      new Error('rate limited'),
+      { status: 429, provider: 'openai', retryAfterMs: 12_000 }
+    ));
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(429);
+    expect(res.body.error).toContain('Wait about 12s');
   });
 });

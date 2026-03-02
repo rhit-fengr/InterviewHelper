@@ -35,6 +35,7 @@ export const useInterviewStore = create(
         showTranscript: true,
         showTranslation: false,
         showCustomInput: true,
+        audioInputMode: 'mic',
       },
 
       // ── Personal Info ────────────────────────────────────────────────────

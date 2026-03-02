@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const STORAGE_KEY_SERVER_URL = '@interview_hammer_server_url';
+const STORAGE_KEY_SERVER_URL = '@interview_ai_hamburger_server_url';
+const LEGACY_STORAGE_KEY_SERVER_URL = '@interview_hammer_server_url';
 const DEFAULT_SERVER_URL = process.env.EXPO_PUBLIC_SERVER_URL || 'http://localhost:4000';
 
 /**
@@ -29,7 +30,16 @@ export default function ConnectScreen({ onConnect }) {
   // Restore the last-used server URL from persistent storage
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY_SERVER_URL)
-      .then((saved) => { if (saved) setServerUrl(saved); })
+      .then((saved) => {
+        if (saved) {
+          setServerUrl(saved);
+          return null;
+        }
+        return AsyncStorage.getItem(LEGACY_STORAGE_KEY_SERVER_URL);
+      })
+      .then((legacySaved) => {
+        if (legacySaved) setServerUrl(legacySaved);
+      })
       .catch(() => {/* ignore */});
   }, []);
 
@@ -67,7 +77,7 @@ export default function ConnectScreen({ onConnect }) {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.logo}>⚡</Text>
-          <Text style={styles.title}>Interview Hammer</Text>
+          <Text style={styles.title}>Interview AI Hamburger</Text>
           <Text style={styles.subtitle}>Mobile Companion</Text>
         </View>
 
@@ -126,7 +136,7 @@ export default function ConnectScreen({ onConnect }) {
         {/* Instructions */}
         <View style={styles.instructionsBox}>
           <Text style={styles.instructionsTitle}>How to connect</Text>
-          <Text style={styles.instructionStep}>1. Open Interview Hammer on your desktop</Text>
+          <Text style={styles.instructionStep}>1. Open Interview AI Hamburger on your desktop</Text>
           <Text style={styles.instructionStep}>2. Navigate to Undetectable Mode</Text>
           <Text style={styles.instructionStep}>3. Note the session code shown on screen</Text>
           <Text style={styles.instructionStep}>4. Enter the code above and tap Connect</Text>

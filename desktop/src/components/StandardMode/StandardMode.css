@@ -142,6 +142,78 @@
   animation: pulse 1s infinite;
 }
 
+.transcript-lang-badge {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.transcript-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transcript-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 220px;
+  min-height: 120px;
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+  resize: vertical;
+}
+
+.transcript-entry {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+}
+
+.speaker-tag {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 2px 8px;
+  text-transform: uppercase;
+}
+
+.speaker-interviewer {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
+.speaker-candidate {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.speaker-unknown {
+  background: rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+}
+
+.entry-language-tag {
+  color: #a78bfa;
+  font-size: 11px;
+}
+
+.entry-text {
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.transcript-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  margin: 0;
+}
+
 .btn-copy {
   background: none;
   border: 1px solid rgba(255, 255, 255, 0.15);
@@ -166,8 +238,7 @@
   color: #e2e8f0;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
+  margin: 0;
 }
 
 .question-text {
@@ -282,7 +353,35 @@
 }
 
 .history-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.history-header .box-label {
+  margin-bottom: 0;
+}
+
+.history-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-history-action {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 8px;
+  transition: all 0.2s;
+}
+
+.btn-history-action:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+  color: #f8fafc;
 }
 
 .history-list {
@@ -312,4 +411,10 @@
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.history-collapsed-note {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
 }

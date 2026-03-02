@@ -153,12 +153,13 @@ function initSocketServer(httpServer) {
     // Desktop streams transcript update to mobile
     socket.on('transcript-update', (payload = {}) => {
       const sessionCode = normalizeSessionCode(payload.sessionCode);
-      const { transcript } = payload;
+      const { sessionCode: _ignored, ...rest } = payload;
       if (!isValidSessionCode(sessionCode)) return;
+      if (typeof rest.transcript !== 'string') return;
 
       const session = sessions.get(sessionCode);
       if (session?.hostSocket === socket && session.clientSocket) {
-        session.clientSocket.emit('transcript-update', { transcript });
+        session.clientSocket.emit('transcript-update', rest);
       }
     });
 

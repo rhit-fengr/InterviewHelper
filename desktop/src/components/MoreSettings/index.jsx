@@ -17,6 +17,7 @@ export default function MoreSettings({ onBack }) {
   } = useInterviewStore();
 
   const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron;
+  const desktopOnlyDisabled = !isElectron;
 
   const handleOpacityChange = (e) => {
     const val = parseFloat(e.target.value);
@@ -48,6 +49,12 @@ export default function MoreSettings({ onBack }) {
         <button className="btn-back" onClick={onBack}>← Back</button>
         <h2 className="panel-title">More Settings</h2>
       </div>
+
+      {desktopOnlyDisabled && (
+        <div className="env-warning">
+          Running in web preview (`localhost:3000`). Desktop-only settings are shown but currently disabled.
+        </div>
+      )}
 
       {/* Personal Info */}
       <section className="settings-section">
@@ -181,6 +188,7 @@ export default function MoreSettings({ onBack }) {
             value={displaySettings.windowOpacity}
             onChange={handleOpacityChange}
             className="range-input"
+            disabled={desktopOnlyDisabled}
           />
         </div>
 
@@ -189,10 +197,11 @@ export default function MoreSettings({ onBack }) {
             type="checkbox"
             checked={displaySettings.alwaysOnTop}
             onChange={handleAlwaysOnTop}
+            disabled={desktopOnlyDisabled}
           />
           <div>
             <div className="checkbox-label">Always On Top</div>
-            <div className="checkbox-desc">Keep Interview Hammer above other windows</div>
+            <div className="checkbox-desc">Keep Interview AI Hamburger above other windows</div>
           </div>
         </label>
       </section>
@@ -206,6 +215,7 @@ export default function MoreSettings({ onBack }) {
             type="checkbox"
             checked={advancedSettings.hideFromScreenSharing}
             onChange={handleHideFromScreenSharing}
+            disabled={desktopOnlyDisabled}
           />
           <div>
             <div className="checkbox-label">Hide from Screen Sharing</div>
@@ -218,6 +228,7 @@ export default function MoreSettings({ onBack }) {
             type="checkbox"
             checked={advancedSettings.hideAppIcon}
             onChange={handleHideAppIcon}
+            disabled={desktopOnlyDisabled}
           />
           <div>
             <div className="checkbox-label">Hide App Icon</div>

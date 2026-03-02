@@ -13,7 +13,7 @@ import { io } from 'socket.io-client';
  * @param {() => void} [options.onSessionJoined]      - Called when successfully joined
  * @param {(msg: string) => void} [options.onSessionError] - Called on join failure
  * @param {(chunk: string, isDone: boolean) => void} [options.onAnswerChunk] - Answer delta received
- * @param {(transcript: string) => void} [options.onTranscriptUpdate] - Transcript received
+ * @param {(transcript: string, payload?: object) => void} [options.onTranscriptUpdate] - Transcript received
  * @param {() => void} [options.onHostDisconnected]   - Called when desktop host disconnects
  */
 export function useSocketClient({
@@ -78,8 +78,22 @@ export function useSocketClient({
       onAnswerChunkRef.current?.(chunk, isDone);
     });
 
-    socket.on('transcript-update', ({ transcript }) => {
-      onTranscriptUpdateRef.current?.(transcript);
+    socket.on('transcript-update', (payload = {}) => {
+      const transcript =
+        typeof payload === 'string'
+          ? payload
+          : (payload?.transcript || '');
+      if (!transcript) return;
+
+      const callback = onTranscriptUpdateRef.current;
+      if (!callback) return;
+
+      // Backward-compatible: callbacks expecting one arg keep receiving only text.
+      if (callback.length >= 2) {
+        callback(transcript, payload);
+      } else {
+        callback(transcript);
+      }
     });
 
     socket.on('host-disconnected', () => {

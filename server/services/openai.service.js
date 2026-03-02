@@ -43,6 +43,7 @@ const TOKEN_LIMITS = {
   long: 1000,
 };
 const RATE_LIMIT_COOLDOWN_MS = Number(process.env.AI_RATE_LIMIT_COOLDOWN_MS || 60_000);
+const RATE_LIMIT_MAX_COOLDOWN_MS = Number(process.env.AI_RATE_LIMIT_MAX_COOLDOWN_MS || 300_000);
 /** provider -> epoch ms */
 const providerCooldownUntil = new Map();
 
@@ -121,7 +122,8 @@ function parseRetryAfterMs(headers = {}) {
 
 function markProviderRateLimited(provider, err) {
   const retryAfterMs = parseRetryAfterMs(err?.headers);
-  const cooldownMs = Math.max(RATE_LIMIT_COOLDOWN_MS, retryAfterMs);
+  const rawCooldownMs = Math.max(RATE_LIMIT_COOLDOWN_MS, retryAfterMs);
+  const cooldownMs = Math.min(rawCooldownMs, RATE_LIMIT_MAX_COOLDOWN_MS);
   providerCooldownUntil.set(provider, Date.now() + cooldownMs);
 }
 
@@ -130,9 +132,16 @@ function isProviderOnCooldown(provider) {
   return until > Date.now();
 }
 
+function getProviderCooldownRemainingMs(provider) {
+  const until = providerCooldownUntil.get(provider) || 0;
+  return Math.max(0, until - Date.now());
+}
+
 function buildRateLimitError(provider) {
   const err = new Error(`Provider "${provider}" is temporarily rate-limited.`);
   err.status = 429;
+  err.provider = provider;
+  err.retryAfterMs = getProviderCooldownRemainingMs(provider);
   return err;
 }
 
@@ -379,5 +388,6 @@ module.exports = {
   buildSystemPrompt,
   normalizeProvider,
   isProviderConfigured,
+  getProviderCooldownRemainingMs,
   isConfigured,
 };

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Interview Hammer",
-    "slug": "interview-hammer-mobile",
+    "name": "Interview AI Hamburger",
+    "slug": "interview-ai-hamburger-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -12,13 +12,13 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.interviewhammer.mobile"
+      "bundleIdentifier": "com.interviewaihamburger.mobile"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#0f1117"
       },
-      "package": "com.interviewhammer.mobile"
+      "package": "com.interviewaihamburger.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"

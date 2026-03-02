@@ -51,8 +51,12 @@ export function useSocketSync({ role = 'host' } = {}) {
     socketRef.current?.emit('stream-answer', { sessionCode: code, chunk, isDone });
   }, []);
 
-  const streamTranscript = useCallback((code, transcript) => {
-    socketRef.current?.emit('transcript-update', { sessionCode: code, transcript });
+  const streamTranscript = useCallback((code, transcript, metadata = {}) => {
+    socketRef.current?.emit('transcript-update', {
+      sessionCode: code,
+      transcript,
+      ...metadata,
+    });
   }, []);
 
   const onAnswerChunk = useCallback((handler) => {

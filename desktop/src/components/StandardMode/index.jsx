@@ -2,6 +2,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
 import { useTranscript } from '../../hooks/useTranscript';
 import { useAIAnswer } from '../../hooks/useAIAnswer';
+import { LANGUAGES } from '../../constants';
+import {
+  buildManualQuestionFromEntries,
+  buildSessionExportText,
+  extractManualQuestionFromTranscript,
+  getTranscriptTail,
+  guessSpeakerLabel,
+} from '../../utils/interviewTranscript';
+import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnswer';
 import './StandardMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
@@ -12,11 +21,16 @@ export default function StandardMode({ onBack }) {
   const [customInput, setCustomInput] = useState('');
   const [conversationHistory, setConversationHistory] = useState([]);
   const [lastQuestion, setLastQuestion] = useState('');
+  const [transcriptEntries, setTranscriptEntries] = useState([]);
+  const [historyView, setHistoryView] = useState('expanded');
   const detectionTimeoutRef = useRef(null);
+  const transcriptScrollRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
+  const lastAutoAnswerRef = useRef(null);
   // Track the in-flight question so we can save user+assistant pair when generation completes
   const pendingQuestionRef = useRef(null);
   const prevIsLoadingRef = useRef(false);
+  const isLoadingRef = useRef(false);
 
   // Keep latest values in refs so callbacks are stable and don't go stale
   const sessionRef = useRef(session);
@@ -31,6 +45,11 @@ export default function StandardMode({ onBack }) {
   useEffect(() => { conversationHistoryRef.current = conversationHistory; }, [conversationHistory]);
 
   const { answer, isLoading, error: aiError, generateAnswer, cancelGeneration, clearAnswer } = useAIAnswer();
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+
+  const languageLabelByValue = useRef(
+    Object.fromEntries(LANGUAGES.map((l) => [l.value, l.label]))
+  );
 
   const triggerAnswerGeneration = useCallback((question) => {
     pendingQuestionRef.current = question;
@@ -59,11 +78,24 @@ export default function StandardMode({ onBack }) {
         }),
       });
       const data = await res.json();
-      if (data.isQuestion && data.question) {
-        lastDetectedAtRef.current = Date.now();
-        setLastQuestion(data.question);
-        triggerAnswerGeneration(data.question);
+      const detectedQuestion = typeof data.question === 'string' ? data.question.trim() : '';
+      if (!data.isQuestion || !detectedQuestion) return;
+      if (shouldSkipAutoAnswer({
+        question: detectedQuestion,
+        lastAuto: lastAutoAnswerRef.current,
+        pendingQuestion: pendingQuestionRef.current,
+        isLoading: isLoadingRef.current,
+      })) {
+        return;
       }
+
+      lastDetectedAtRef.current = Date.now();
+      lastAutoAnswerRef.current = {
+        key: normalizeQuestionKey(detectedQuestion),
+        at: Date.now(),
+      };
+      setLastQuestion(detectedQuestion);
+      triggerAnswerGeneration(detectedQuestion);
     } catch {
       // Network error — skip detection
     }
@@ -74,7 +106,7 @@ export default function StandardMode({ onBack }) {
     clearTimeout(detectionTimeoutRef.current);
     // Debounce question detection — wait 1.5s of silence before checking
     detectionTimeoutRef.current = setTimeout(() => {
-      runQuestionDetection(text);
+      runQuestionDetection(getTranscriptTail(text, 1200));
     }, 1500);
   }, [runQuestionDetection]);
 
@@ -83,12 +115,31 @@ export default function StandardMode({ onBack }) {
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
 
-  const { transcript, isListening, error: transcriptError, clearTranscript } = useTranscript({
+  const {
+    transcript,
+    isListening,
+    error: transcriptError,
+    activeLanguage,
+    clearTranscript,
+  } = useTranscript({
     // Always enable transcript when running so the manual "Answer" button and custom input work
     // even when both showTranscript and autoAnswer are off.
     enabled: isRunning,
     language: interviewLangs,
     onTranscriptChange: handleTranscriptUpdate,
+    onFinalSegment: ({ text, language: segmentLanguage, timestamp }) => {
+      const speaker = guessSpeakerLabel(text);
+      setTranscriptEntries((prev) => ([
+        ...prev,
+        {
+          text,
+          language: segmentLanguage,
+          speaker,
+          timestamp,
+        },
+      ].slice(-500)));
+    },
+    rotationIntervalMs: 8000,
   });
 
   const handleCustomSubmit = (e) => {
@@ -101,9 +152,12 @@ export default function StandardMode({ onBack }) {
   };
 
   const handleManualAnswer = () => {
-    if (transcript.trim()) {
-      runQuestionDetection(transcript);
-    }
+    const manualQuestion =
+      buildManualQuestionFromEntries(transcriptEntries, { maxEntries: 3, maxChars: 500 }) ||
+      extractManualQuestionFromTranscript(getTranscriptTail(transcript, 500));
+    if (!manualQuestion) return;
+    setLastQuestion(manualQuestion);
+    triggerAnswerGeneration(manualQuestion);
   };
 
   const handleToggle = () => {
@@ -111,16 +165,24 @@ export default function StandardMode({ onBack }) {
       clearTimeout(detectionTimeoutRef.current);
       setIsRunning(false);
       cancelGeneration();
+      pendingQuestionRef.current = null;
     } else {
       setIsRunning(true);
       clearAnswer();
       clearTranscript();
+      setTranscriptEntries([]);
+      lastAutoAnswerRef.current = null;
     }
   };
 
   useEffect(() => {
     return () => clearTimeout(detectionTimeoutRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!transcriptScrollRef.current) return;
+    transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
+  }, [transcriptEntries.length]);
 
   // Save completed conversation turn (user question + assistant answer) to history
   useEffect(() => {
@@ -151,13 +213,20 @@ export default function StandardMode({ onBack }) {
   }
 
   const handleExport = () => {
-    if (completedTurns.length === 0) return;
-    const lines = completedTurns.flatMap((turn) => [
-      `Q: ${turn.question}`,
-      `A: ${turn.answer}`,
-      '',
-    ]);
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    if (!transcript.trim() && completedTurns.length === 0) return;
+
+    const content = buildSessionExportText({
+      transcript,
+      transcriptEntries,
+      completedTurns,
+      metadata: {
+        topic: setup.topic,
+        answerLang: setup.answerLang,
+        interviewLangs,
+      },
+    });
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -191,17 +260,19 @@ export default function StandardMode({ onBack }) {
             onClick={() => {
               cancelGeneration();
               pendingQuestionRef.current = null;
+              lastAutoAnswerRef.current = null;
               clearTimeout(detectionTimeoutRef.current);
               detectionTimeoutRef.current = null;
               clearAnswer();
               clearTranscript();
               setLastQuestion('');
+              setTranscriptEntries([]);
             }}
           >
             Clear
           </button>
         )}
-        {completedTurns.length > 0 && (
+        {(completedTurns.length > 0 || transcript.trim()) && (
           <button className="btn-export" onClick={handleExport}>
             Export
           </button>
@@ -212,10 +283,33 @@ export default function StandardMode({ onBack }) {
         <div className="error-box">⚠️ {transcriptError || aiError}</div>
       )}
 
-      {session.showTranscript && transcript && (
+      {session.showTranscript && (isRunning || transcript) && (
         <div className="transcript-box">
-          <div className="box-label">🎤 Transcript</div>
-          <p className="transcript-text">{transcript}</p>
+          <div className="box-label-row">
+            <span className="box-label">🎤 Transcript</span>
+            <span className="transcript-lang-badge">
+              Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
+              {interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
+            </span>
+          </div>
+
+          <div className="transcript-scroll" ref={transcriptScrollRef}>
+            {transcriptEntries.length > 0 ? (
+              <div className="transcript-entry-list">
+                {transcriptEntries.slice(-150).map((entry, idx) => (
+                  <div key={`${entry.timestamp}-${idx}`} className="transcript-entry">
+                    <span className={`speaker-tag speaker-${entry.speaker.toLowerCase()}`}>
+                      {entry.speaker}
+                    </span>
+                    <span className="entry-language-tag">{entry.language}</span>
+                    <span className="entry-text">{entry.text}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="transcript-empty">{isRunning ? 'Listening...' : 'No transcript yet.'}</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -233,10 +327,11 @@ export default function StandardMode({ onBack }) {
         </div>
       )}
 
-      {!session.autoAnswer && isRunning && transcript.trim() && (
+      {isRunning && (transcriptEntries.length > 0 || transcript.trim()) && (
         <div className="control-bar">
           <button className="btn-answer-wide" onClick={handleManualAnswer} disabled={isLoading}>
             💡 Answer Current Transcript
+            {session.autoAnswer ? ' (Manual Retry)' : ''}
           </button>
         </div>
       )}
@@ -266,17 +361,45 @@ export default function StandardMode({ onBack }) {
         <div className="history-section">
           <div className="history-header">
             <span className="box-label">📋 Conversation History</span>
+            <div className="history-actions">
+              {historyView !== 'hidden' && (
+                <button
+                  className="btn-history-action"
+                  onClick={() => setHistoryView((prev) => (prev === 'expanded' ? 'collapsed' : 'expanded'))}
+                >
+                  {historyView === 'expanded' ? 'Collapse' : 'Expand'}
+                </button>
+              )}
+              <button
+                className="btn-history-action"
+                onClick={() => setHistoryView((prev) => (prev === 'hidden' ? 'expanded' : 'hidden'))}
+              >
+                {historyView === 'hidden' ? 'Show' : 'Hide'}
+              </button>
+            </div>
           </div>
-          <div className="history-list">
-            {completedTurns.map((turn, idx) => (
-              <div key={idx} className="history-turn">
-                <div className="history-question">Q: {turn.question}</div>
-                <div className="history-answer" style={{ fontSize: `${displaySettings.fontSize}px` }}>
-                  A: {turn.answer}
+          {historyView === 'expanded' && (
+            <div className="history-list">
+              {completedTurns.map((turn, idx) => (
+                <div key={idx} className="history-turn">
+                  <div className="history-question">Q: {turn.question}</div>
+                  <div className="history-answer" style={{ fontSize: `${displaySettings.fontSize}px` }}>
+                    A: {turn.answer}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
+          {historyView === 'collapsed' && (
+            <div className="history-collapsed-note">
+              {completedTurns.length} turn(s) kept in memory and will still be included in export.
+            </div>
+          )}
+          {historyView === 'hidden' && (
+            <div className="history-collapsed-note">
+              History panel hidden. {completedTurns.length} turn(s) are still retained for context and export.
+            </div>
+          )}
         </div>
       )}
 

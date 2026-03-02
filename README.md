@@ -347,6 +347,7 @@ Subtitle-plugin evolution plan:
 - If you intentionally use `Gemini` transcription, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).
 - For non-cloud setup, start `local-whisper-service`, configure `LOCAL_TRANSCRIBE_URL`, and choose `Local Whisper Service` (or `Auto`).
 - If `start_local_whisper.bat` appears to do nothing, open `cmd` first and run it there to read the error; most common root causes are missing Python or failed pip install.
+- If you see `Python was not found` or local-whisper health-check timeout, install Python 3.10+ and ensure `python`/`py` is available in PATH, then relaunch the app.
 
 **App feels laggy or buttons are unresponsive in Chrome**
 - Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.

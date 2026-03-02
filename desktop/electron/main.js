@@ -11,6 +11,8 @@ let localWhisperProcess = null;
 let localWhisperManaged = false;
 let localWhisperLeaseCount = 0;
 let localWhisperStartPromise = null;
+let localWhisperLastExitCode = null;
+let localWhisperRecentLogs = [];
 
 const LOCAL_WHISPER_HEALTH_URL = String(
   process.env.LOCAL_WHISPER_HEALTH_URL || 'http://127.0.0.1:8765/health'
@@ -22,6 +24,31 @@ const LOCAL_WHISPER_START_TIMEOUT_MS = Math.max(
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function appendLocalWhisperLog(text) {
+  const line = String(text || '').trim();
+  if (!line) return;
+  localWhisperRecentLogs.push(line);
+  if (localWhisperRecentLogs.length > 60) {
+    localWhisperRecentLogs = localWhisperRecentLogs.slice(-60);
+  }
+}
+
+function getLocalWhisperFailureMessage(baseMessage) {
+  const recent = localWhisperRecentLogs.slice(-12);
+  const joined = recent.join('\n');
+  let hint = '';
+
+  if (/python was not found/i.test(joined) || /python.+not found/i.test(joined)) {
+    hint = 'Python 3.10+ is required for Local STT. Install Python, reopen the app, and retry.';
+  } else if (/no module named/i.test(joined) || /module not found/i.test(joined)) {
+    hint = 'Python environment is missing dependencies. Re-run local-whisper setup and retry.';
+  }
+
+  const lastLine = recent.length > 0 ? recent[recent.length - 1] : '';
+  const extra = [hint, lastLine ? `Last log: ${lastLine}` : ''].filter(Boolean).join(' ');
+  return [baseMessage, extra].filter(Boolean).join(' ').trim();
 }
 
 function getLocalWhisperPortFromHealthUrl() {
@@ -84,6 +111,8 @@ function spawnLocalWhisperProcess() {
   }
 
   const command = `""${scriptPath}" --quiet"`;
+  localWhisperRecentLogs = [];
+  localWhisperLastExitCode = null;
   const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
     cwd: path.dirname(scriptPath),
     env: {
@@ -95,15 +124,22 @@ function spawnLocalWhisperProcess() {
   });
 
   child.stdout?.on('data', (buf) => {
-    const text = String(buf || '').trim();
-    if (text) console.log('[local-whisper]', text);
+    const lines = String(buf || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (const line of lines) {
+      appendLocalWhisperLog(line);
+      console.log('[local-whisper]', line);
+    }
   });
   child.stderr?.on('data', (buf) => {
-    const text = String(buf || '').trim();
-    if (text) console.error('[local-whisper]', text);
+    const lines = String(buf || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (const line of lines) {
+      appendLocalWhisperLog(line);
+      console.error('[local-whisper]', line);
+    }
   });
 
   child.once('exit', (code) => {
+    localWhisperLastExitCode = Number.isInteger(code) ? code : -1;
     const exitedPid = child.pid;
     if (localWhisperProcess && localWhisperProcess.pid === exitedPid) {
       localWhisperProcess = null;
@@ -116,7 +152,7 @@ function spawnLocalWhisperProcess() {
 
   localWhisperProcess = child;
   localWhisperManaged = true;
-  return { ok: true };
+  return { ok: true, pid: child.pid };
 }
 
 async function ensureLocalWhisper() {
@@ -136,12 +172,21 @@ async function ensureLocalWhisper() {
       if (!spawnResult.ok) {
         throw new Error(spawnResult.message || 'Failed to start local whisper service.');
       }
+      const expectedPid = spawnResult.pid;
       const deadline = Date.now() + LOCAL_WHISPER_START_TIMEOUT_MS;
       while (Date.now() < deadline) {
         if (await isLocalWhisperHealthy()) return true;
+        if (!localWhisperProcess || localWhisperProcess.pid !== expectedPid) {
+          const exitSuffix = localWhisperLastExitCode !== null
+            ? ` (exit code ${localWhisperLastExitCode})`
+            : '';
+          throw new Error(getLocalWhisperFailureMessage(
+            `Local whisper launcher exited before health check${exitSuffix}.`
+          ));
+        }
         await sleep(1_000);
       }
-      throw new Error('Timed out waiting for local whisper service health check.');
+      throw new Error(getLocalWhisperFailureMessage('Timed out waiting for local whisper service health check.'));
     })().finally(() => {
       localWhisperStartPromise = null;
     });

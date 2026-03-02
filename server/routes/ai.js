@@ -205,6 +205,11 @@ router.post('/transcribe-chunk', transcribeUpload.single('audio'), async (req, r
         error: `Transcription rate limit reached. Wait about ${cooldownSeconds}s and retry.`,
       });
     }
+    if (status === 503) {
+      return res.status(503).json({
+        error: err?.message || `Transcription service (${provider}) is not configured.`,
+      });
+    }
     return res.status(status).json({
       error: err?.message || 'Audio transcription failed',
     });

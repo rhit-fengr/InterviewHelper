@@ -57,7 +57,8 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Interview AI Hamburger"
+      "shortcutName": "Interview AI Hamburger",
+      "include": "scripts/installer-hooks.nsh"
     }
   },
   "homepage": "./"

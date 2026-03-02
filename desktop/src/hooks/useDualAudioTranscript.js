@@ -7,17 +7,37 @@ const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
 const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
 
-function pickRecorderMimeType() {
+function pickRecorderMimeType(provider = 'openai') {
   if (typeof MediaRecorder === 'undefined') return '';
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/mp4',
-  ];
+  const normalizedProvider = String(provider || '').toLowerCase();
+  const candidates = normalizedProvider === 'gemini'
+    ? [
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+    ]
+    : [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+    ];
   for (const type of candidates) {
     if (MediaRecorder.isTypeSupported(type)) return type;
   }
   return '';
+}
+
+function inferExtensionFromMimeType(mimeType = '') {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.includes('ogg')) return 'ogg';
+  if (normalized.includes('mp4')) return 'mp4';
+  if (normalized.includes('mpeg') || normalized.includes('mp3')) return 'mp3';
+  if (normalized.includes('wav')) return 'wav';
+  return 'webm';
 }
 
 function appendTranscriptSegment(previous, segment) {
@@ -104,8 +124,9 @@ export function useDualAudioTranscript({
   }, []);
 
   const transcribeChunk = useCallback(async (chunkBlob) => {
+    const mimeType = chunkBlob?.type || 'audio/webm';
     const form = new FormData();
-    form.append('audio', chunkBlob, `chunk-${Date.now()}.webm`);
+    form.append('audio', chunkBlob, `chunk-${Date.now()}.${inferExtensionFromMimeType(mimeType)}`);
     form.append('provider', provider);
     form.append('language', primaryLanguage);
     form.append('sourceMode', 'mic-system');
@@ -143,6 +164,8 @@ export function useDualAudioTranscript({
       const message = err?.message || 'Transcription request failed.';
       if (/rate limit/i.test(String(message))) {
         setError('Rate limit reached while transcribing audio. Wait a moment and try again.');
+      } else if (/failed to fetch/i.test(String(message))) {
+        setError(`Cannot reach transcription service at ${SERVER_URL}. Ensure server is running.`);
       } else {
         setError(`${TRANSCRIBE_ERROR_PREFIX} ${message}`);
       }
@@ -211,7 +234,7 @@ export function useDualAudioTranscript({
         systemSource.connect(destination);
 
         const mixedStream = destination.stream;
-        const mimeType = pickRecorderMimeType();
+        const mimeType = pickRecorderMimeType(provider);
         const recorder = mimeType
           ? new MediaRecorder(mixedStream, { mimeType })
           : new MediaRecorder(mixedStream);

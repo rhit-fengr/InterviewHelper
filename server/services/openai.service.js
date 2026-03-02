@@ -12,9 +12,13 @@ const AI_TRANSCRIBE_MAX_BYTES = Number(process.env.AI_TRANSCRIBE_MAX_BYTES || 5 
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || GEMINI_MODEL;
+const GEMINI_TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || GEMINI_MODEL;
 const GEMINI_BASE_URL = ensureTrailingSlash(
   process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/'
 );
+const GEMINI_NATIVE_BASE_URL = (
+  process.env.GEMINI_NATIVE_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
+).replace(/\/+$/, '');
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -161,8 +165,20 @@ function inferExtensionFromMime(mimeType = '') {
   const normalized = String(mimeType || '').toLowerCase();
   if (normalized.includes('mp4')) return 'mp4';
   if (normalized.includes('mpeg')) return 'mp3';
+  if (normalized.includes('ogg')) return 'ogg';
   if (normalized.includes('wav')) return 'wav';
   return 'webm';
+}
+
+function normalizeMimeType(mimeType = 'audio/webm') {
+  const lower = String(mimeType || '').toLowerCase().split(';')[0].trim();
+  return lower || 'audio/webm';
+}
+
+function toGeminiAudioMimeType(mimeType = 'audio/webm') {
+  const normalized = normalizeMimeType(mimeType);
+  if (normalized === 'audio/mp3') return 'audio/mpeg';
+  return normalized;
 }
 
 function sanitizeLanguageHint(languageHint) {
@@ -170,6 +186,68 @@ function sanitizeLanguageHint(languageHint) {
   if (!candidate) return '';
   // Keep BCP-47-ish values only.
   return /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(candidate) ? candidate : '';
+}
+
+function extractGeminiText(response = {}) {
+  const parts = response?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+}
+
+async function transcribeWithGemini({ audioBuffer, mimeType, languageHint }) {
+  const model = encodeURIComponent(GEMINI_TRANSCRIBE_MODEL);
+  const url = `${GEMINI_NATIVE_BASE_URL}/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const normalizedLang = sanitizeLanguageHint(languageHint);
+  const languageHintLine = normalizedLang
+    ? `Language hint: ${normalizedLang}. Keep the output in this language when possible.`
+    : 'No language hint provided. Detect language automatically.';
+
+  const payload = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: [
+              'You are a speech-to-text engine.',
+              'Transcribe the provided audio exactly.',
+              'Do not add commentary.',
+              languageHintLine,
+            ].join(' '),
+          },
+          {
+            inlineData: {
+              mimeType: toGeminiAudioMimeType(mimeType),
+              data: audioBuffer.toString('base64'),
+            },
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0,
+    },
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = body?.error?.message || `Gemini transcription failed (${response.status})`;
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+
+  const body = await response.json();
+  return extractGeminiText(body);
 }
 
 /**
@@ -304,37 +382,41 @@ async function transcribeAudioChunk({
   }
 
   const selectedProvider = normalizeProvider(provider);
-  // Transcription currently relies on OpenAI Audio API for compatibility/stability.
-  if (!isConfigured) {
+  const transcriptionProvider = selectedProvider === 'gemini' ? 'gemini' : 'openai';
+
+  if (!isProviderConfigured(transcriptionProvider)) {
     const err = new Error(
-      selectedProvider === 'gemini'
-        ? 'Audio transcription currently requires OPENAI_API_KEY even when Gemini is selected.'
+      transcriptionProvider === 'gemini'
+        ? 'Audio transcription requires GEMINI_API_KEY.'
         : 'Audio transcription requires OPENAI_API_KEY.'
     );
     err.status = 503;
     throw err;
   }
 
-  const transcriptionProvider = 'openai';
   if (isProviderOnCooldown(transcriptionProvider)) {
     throw buildRateLimitError(transcriptionProvider);
   }
 
-  const client = getClient(transcriptionProvider);
-  const file = await OpenAI.toFile(
-    audioBuffer,
-    `chunk.${inferExtensionFromMime(mimeType)}`,
-    { type: mimeType || 'audio/webm' }
-  );
-
-  const payload = {
-    file,
-    model: OPENAI_TRANSCRIBE_MODEL,
-  };
-  const normalizedLang = sanitizeLanguageHint(languageHint);
-  if (normalizedLang) payload.language = normalizedLang;
-
   try {
+    if (transcriptionProvider === 'gemini') {
+      return await transcribeWithGemini({ audioBuffer, mimeType, languageHint });
+    }
+
+    const client = getClient(transcriptionProvider);
+    const file = await OpenAI.toFile(
+      audioBuffer,
+      `chunk.${inferExtensionFromMime(mimeType)}`,
+      { type: normalizeMimeType(mimeType) }
+    );
+
+    const payload = {
+      file,
+      model: OPENAI_TRANSCRIBE_MODEL,
+    };
+    const normalizedLang = sanitizeLanguageHint(languageHint);
+    if (normalizedLang) payload.language = normalizedLang;
+
     const result = await client.audio.transcriptions.create(payload);
     return String(result?.text || '').trim();
   } catch (err) {

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   closeWindow: () => ipcRenderer.invoke('close-window'),
   setOpacity: (opacity) => ipcRenderer.invoke('set-opacity', opacity),
+  setZoomFactor: (factor) => ipcRenderer.invoke('set-zoom-factor', factor),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
   // Check if running inside Electron

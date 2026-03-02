@@ -238,4 +238,21 @@ describe('AI transcribe chunk route', () => {
     expect(res.status).toBe(429);
     expect(res.body.error).toContain('Wait about 12s');
   });
+
+  it('returns 503 message when transcription provider is not configured', async () => {
+    transcribeAudioChunk.mockRejectedValue(Object.assign(
+      new Error('Audio transcription requires GEMINI_API_KEY.'),
+      { status: 503, provider: 'gemini' }
+    ));
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'gemini')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.ogg',
+        contentType: 'audio/ogg',
+      });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('GEMINI_API_KEY');
+  });
 });

@@ -132,6 +132,13 @@ ipcMain.handle('set-opacity', withWindow((_event, opacity) => {
   mainWindow.setOpacity(opacity);
 }));
 
+ipcMain.handle('set-zoom-factor', withWindow((_event, factor) => {
+  const numeric = Number(factor);
+  const safe = Number.isFinite(numeric) ? numeric : 1;
+  const clamped = Math.max(0.8, Math.min(1.6, safe));
+  mainWindow.webContents.setZoomFactor(clamped);
+}));
+
 ipcMain.handle('open-external', (_event, url) => {
   shell.openExternal(url);
 });

@@ -51,7 +51,7 @@ export default function InterviewSetup({ onStart }) {
           value={setup.sttProvider || 'auto'}
           onChange={handleChange('sttProvider')}
         >
-          <option value="auto">Auto (prefer OpenAI when configured)</option>
+          <option value="auto">Auto (OpenAI -> Local -> Gemini)</option>
           <option value="local">Local Whisper Service (no cloud)</option>
           <option value="openai">OpenAI (Whisper)</option>
           <option value="gemini">Gemini (best effort)</option>

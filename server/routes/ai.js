@@ -44,16 +44,14 @@ function getProviderFromRequest(req) {
 
 function getTranscribeProviderFromRequest(req) {
   const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
-  if (typeof rawExplicit === 'string' && rawExplicit.trim()) {
-    const explicit = normalizeTranscribeProvider(rawExplicit);
-    if (explicit === 'openai' || explicit === 'gemini' || explicit === 'local') {
-      return explicit;
-    }
+  const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
+  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local') {
+    return normalizeTranscribeProvider(explicitRaw);
   }
 
   if (isTranscribeProviderConfigured('openai')) return 'openai';
-  if (isTranscribeProviderConfigured('gemini')) return 'gemini';
   if (isTranscribeProviderConfigured('local')) return 'local';
+  if (isTranscribeProviderConfigured('gemini')) return 'gemini';
 
   return getProviderFromRequest(req);
 }
@@ -196,6 +194,7 @@ router.post('/detect-question', async (req, res) => {
  * multipart/form-data:
  *  - audio: Blob/File chunk
  *  - provider?: openai|gemini
+ *  - transcribeProvider?: auto|openai|local|gemini
  *  - language?: BCP-47 hint
  *  - sourceMode?: mic|mic-system
  */

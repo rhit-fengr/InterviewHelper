@@ -265,6 +265,27 @@ describe('AI transcribe chunk route', () => {
     }));
   });
 
+  it('auto prefers openai over local/gemini when openai is configured', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => (
+      provider === 'openai' || provider === 'local' || provider === 'gemini'
+    ));
+    transcribeAudioChunk.mockResolvedValue('openai transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'auto')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai',
+      mimeType: 'audio/webm',
+    }));
+  });
+
   it('returns 429 with cooldown guidance for transcription rate limit', async () => {
     transcribeAudioChunk.mockRejectedValue(Object.assign(
       new Error('rate limited'),

@@ -295,7 +295,7 @@ async function transcribeWithLocal({ audioBuffer, mimeType, languageHint }) {
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    const message = body?.error || body?.message || `Local transcription failed (${response.status})`;
+    const message = body?.error || body?.message || body?.detail || `Local transcription failed (${response.status})`;
     const err = new Error(message);
     err.status = response.status;
     throw err;

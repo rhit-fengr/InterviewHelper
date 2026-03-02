@@ -107,7 +107,7 @@ describe('useSocketClient', () => {
     expect(onAnswerChunk).toHaveBeenNthCalledWith(3, '', true);
   });
 
-  it('calls onTranscriptUpdate with transcript text', () => {
+  it('calls onTranscriptUpdate with transcript text and metadata', () => {
     const onTranscriptUpdate = jest.fn();
     renderHook(() =>
       useSocketClient({
@@ -123,10 +123,13 @@ describe('useSocketClient', () => {
       socket._trigger('transcript-update', { transcript: 'Tell me about yourself' });
     });
 
-    expect(onTranscriptUpdate).toHaveBeenCalledWith('Tell me about yourself');
+    expect(onTranscriptUpdate).toHaveBeenCalledWith(
+      'Tell me about yourself',
+      expect.any(Object)
+    );
   });
 
-  it('passes transcript payload metadata when callback accepts second argument', () => {
+  it('passes transcript payload metadata as second argument', () => {
     const onTranscriptUpdate = jest.fn((text, payload) => ({ text, payload }));
     renderHook(() =>
       useSocketClient({
@@ -153,6 +156,82 @@ describe('useSocketClient', () => {
         speaker: 'Interviewer',
       })
     );
+  });
+
+  it('passes empty metadata object when payload is a plain string', () => {
+    const onTranscriptUpdate = jest.fn();
+    renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://localhost:4000',
+        sessionCode: 'TEST-1234',
+        onTranscriptUpdate,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => { socket._trigger('connect'); });
+    act(() => {
+      socket._trigger('transcript-update', 'plain string transcript');
+    });
+
+    expect(onTranscriptUpdate).toHaveBeenCalledWith('plain string transcript', {});
+  });
+
+  it('ignores transcript-update when payload.transcript is a number', () => {
+    const onTranscriptUpdate = jest.fn();
+    renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://localhost:4000',
+        sessionCode: 'TEST-1234',
+        onTranscriptUpdate,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => { socket._trigger('connect'); });
+    act(() => {
+      socket._trigger('transcript-update', { transcript: 42 });
+    });
+
+    expect(onTranscriptUpdate).not.toHaveBeenCalled();
+  });
+
+  it('ignores transcript-update when payload.transcript is an object', () => {
+    const onTranscriptUpdate = jest.fn();
+    renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://localhost:4000',
+        sessionCode: 'TEST-1234',
+        onTranscriptUpdate,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => { socket._trigger('connect'); });
+    act(() => {
+      socket._trigger('transcript-update', { transcript: { text: 'hello' } });
+    });
+
+    expect(onTranscriptUpdate).not.toHaveBeenCalled();
+  });
+
+  it('ignores transcript-update when payload.transcript is an array', () => {
+    const onTranscriptUpdate = jest.fn();
+    renderHook(() =>
+      useSocketClient({
+        serverUrl: 'http://localhost:4000',
+        sessionCode: 'TEST-1234',
+        onTranscriptUpdate,
+      })
+    );
+
+    const socket = io.getLastSocket();
+    act(() => { socket._trigger('connect'); });
+    act(() => {
+      socket._trigger('transcript-update', { transcript: ['hello'] });
+    });
+
+    expect(onTranscriptUpdate).not.toHaveBeenCalled();
   });
 
   it('sets sessionStatus to "error" and calls onHostDisconnected on host-disconnected', () => {

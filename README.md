@@ -347,8 +347,8 @@ Detailed signing and installer acceptance checklist:
 - Restart the server after changing environment variables.
 
 **"Answer Current Transcript" appears to do nothing**
-- The manual answer button now sends the current transcript directly as a prompt (it no longer depends on question-detection heuristics).
-- Ensure transcript text is non-empty and microphone input is active.
+- The manual answer button now extracts a question from the current transcript (typically the latest line) and sends that as the prompt (it no longer depends on question-detection heuristics).
+- Ensure transcript text has at least one meaningful line and microphone input is active.
 
 **Auto Answer occasionally generates duplicates**
 - The app now deduplicates repeated auto-detected questions within a cooldown window.

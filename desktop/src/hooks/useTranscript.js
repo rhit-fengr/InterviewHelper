@@ -47,9 +47,9 @@ export function useTranscript({
   const lastTranscriptRef = useRef('');
   const committedRef = useRef('');
   const sessionFinalRef = useRef('');
+  const interimCacheRef = useRef(new Map());
   const languageIndexRef = useRef(0);
   const lastFinalAtRef = useRef(Date.now());
-  const lastLanguageStartAtRef = useRef(Date.now());
   const rotationMonitorRef = useRef(null);
 
   useEffect(() => {
@@ -88,6 +88,7 @@ export function useTranscript({
         committedRef.current = `${committedRef.current}${sessionFinalRef.current}\n`;
         sessionFinalRef.current = '';
       }
+      interimCacheRef.current.clear();
     };
 
     if (!enabled) {
@@ -129,8 +130,8 @@ export function useTranscript({
 
       rotationMonitorRef.current = setInterval(() => {
         if (!enabledRef.current || recognitionRef.current !== recognition) return;
-        const elapsedOnCurrentLanguage = Date.now() - lastLanguageStartAtRef.current;
-        if (elapsedOnCurrentLanguage >= rotationIntervalMs) {
+        const elapsedSinceLastFinal = Date.now() - lastFinalAtRef.current;
+        if (elapsedSinceLastFinal >= rotationIntervalMs) {
           try {
             recognition.stop();
           } catch {
@@ -144,7 +145,6 @@ export function useTranscript({
       setIsListening(true);
       setError(null);
       lastFinalAtRef.current = Date.now();
-      lastLanguageStartAtRef.current = Date.now();
       startRotationMonitor();
     };
 
@@ -171,17 +171,23 @@ export function useTranscript({
 
     recognition.onresult = (event) => {
       let finalDelta = '';
-      let sessionInterim = '';
 
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
         const text = result?.[0]?.transcript || '';
-        if (!text) continue;
         if (result.isFinal) {
-          finalDelta += text;
+          if (text) finalDelta += text;
+          interimCacheRef.current.delete(i);
+        } else if (text) {
+          interimCacheRef.current.set(i, text);
         } else {
-          sessionInterim += text;
+          interimCacheRef.current.delete(i);
         }
+      }
+
+      let sessionInterim = '';
+      for (const text of interimCacheRef.current.values()) {
+        sessionInterim += text;
       }
 
       if (finalDelta) {

@@ -70,7 +70,7 @@ export const useInterviewStore = create(
       // ── Advanced Settings ────────────────────────────────────────────────
       advancedSettings: {
         hideAppIcon: false,
-        hideFromScreenSharing: true,
+        hideFromScreenSharing: false,
       },
 
       // ── Actions ──────────────────────────────────────────────────────────

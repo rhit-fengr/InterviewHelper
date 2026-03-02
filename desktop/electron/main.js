@@ -10,11 +10,16 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 420,
     height: 700,
+    minWidth: 380,
+    minHeight: 540,
     frame: false,
-    transparent: true,
+    transparent: false,
+    backgroundColor: '#0f141e',
     alwaysOnTop: true,
     skipTaskbar: false,
     resizable: true,
+    show: false,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -22,11 +27,31 @@ function createWindow() {
     },
   });
 
-  // Hide window from screen sharing/recording (macOS native support)
-  mainWindow.setContentProtection(true);
+  // Keep protection opt-in from renderer settings instead of forcing it on by default.
+  mainWindow.setContentProtection(false);
 
   // Keep window above all others including screen-saver level
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    const failedUrl = validatedURL || '(unknown)';
+    const detail = `${errorCode}: ${errorDescription}`;
+    console.error('[electron] failed to load renderer:', failedUrl, detail);
+    const escaped = String(detail)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const fallbackHtml = `<!doctype html><html><body style="margin:0;background:#0f141e;color:#e2e8f0;font-family:Segoe UI,Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;"><div style="max-width:320px;padding:18px;border:1px solid #334155;border-radius:10px;background:#111827;"><h3 style="margin:0 0 8px 0;font-size:16px;">Interview AI Hamburger</h3><p style="margin:0 0 8px 0;font-size:13px;line-height:1.45;">UI failed to load.</p><p style="margin:0;font-size:12px;opacity:.85;">${escaped}</p></div></body></html>`;
+    mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHtml)}`);
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[electron] renderer process gone:', details?.reason || 'unknown');
+  });
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:3000');

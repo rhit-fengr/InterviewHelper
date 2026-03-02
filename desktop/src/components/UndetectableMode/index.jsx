@@ -156,6 +156,7 @@ export default function UndetectableMode({ onBack }) {
     enabled: isRunning && audioInputMode === 'mic-system',
     language: interviewLangs,
     provider: setup.aiProvider,
+    transcribeProvider: setup.sttProvider,
     onTranscriptChange: handleTranscriptUpdate,
   });
 

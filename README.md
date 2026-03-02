@@ -111,6 +111,7 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 | Field | Description |
 |---|---|
 | AI Provider | `OpenAI` or `Google Gemini` |
+| Transcription Provider | `Auto` (prefer OpenAI when configured), `OpenAI`, or `Gemini` |
 | Topic | Interview category (Software Engineering, Behavioral, etc.) |
 | Interview Language | One or more interviewer languages (auto-cycled when multiple are selected) |
 | Answer Language | Language for AI-generated answers |
@@ -286,6 +287,9 @@ npm run release:win           # Build + hashes + signature verification
 Detailed signing and installer acceptance checklist:
 - `desktop/RELEASE_WINDOWS.md`
 
+Subtitle-plugin evolution plan:
+- `docs/SUBTITLE_PLUGIN_ROADMAP.md`
+
 ---
 
 ## Tech Stack
@@ -309,6 +313,12 @@ Detailed signing and installer acceptance checklist:
 - Make sure you are running the app through Electron (not a non-Chromium browser).
 - Check that your OS microphone permission is granted for Electron.
 - Verify the **Interview Language** setting matches the language you are speaking.
+
+**Mic + System has no transcript output**
+- In `Interview Setup`, set **Transcription Provider** to `Auto` or `OpenAI` for stable real-time chunks.
+- Gemini chunk transcription is "best effort" and can return empty segments on short windows; this is not as reliable as Whisper-style STT.
+- If using `OpenAI` transcription, set `OPENAI_API_KEY` in `server/.env`.
+- If you intentionally use `Gemini` transcription, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).
 
 **App feels laggy or buttons are unresponsive in Chrome**
 - Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.

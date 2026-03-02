@@ -247,7 +247,15 @@ async function transcribeWithGemini({ audioBuffer, mimeType, languageHint }) {
   }
 
   const body = await response.json();
-  return extractGeminiText(body);
+  const text = extractGeminiText(body);
+  if (!text) {
+    const err = new Error(
+      'Gemini returned empty transcription for this chunk. For stable real-time STT, use OpenAI Whisper.'
+    );
+    err.status = 502;
+    throw err;
+  }
+  return text;
 }
 
 /**

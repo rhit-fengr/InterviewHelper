@@ -40,6 +40,21 @@ function getProviderFromRequest(req) {
   );
 }
 
+function getTranscribeProviderFromRequest(req) {
+  const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
+  if (typeof rawExplicit === 'string' && rawExplicit.trim()) {
+    const explicit = normalizeProvider(rawExplicit);
+    if (explicit === 'openai' || explicit === 'gemini') {
+      return explicit;
+    }
+  }
+
+  if (isProviderConfigured('openai')) return 'openai';
+  if (isProviderConfigured('gemini')) return 'gemini';
+
+  return getProviderFromRequest(req);
+}
+
 /**
  * POST /api/ai/answer
  * Body: { question, personalInfo, answerSettings, setup, conversationHistory, provider? }
@@ -182,7 +197,7 @@ router.post('/detect-question', async (req, res) => {
  *  - sourceMode?: mic|mic-system
  */
 router.post('/transcribe-chunk', transcribeUpload.single('audio'), async (req, res) => {
-  const provider = getProviderFromRequest(req);
+  const provider = getTranscribeProviderFromRequest(req);
   if (!req.file?.buffer) {
     return res.status(400).json({ error: 'audio chunk is required' });
   }

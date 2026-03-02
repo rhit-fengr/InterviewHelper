@@ -58,6 +58,7 @@ export function useDualAudioTranscript({
   enabled = false,
   language = 'en-US',
   provider = 'openai',
+  transcribeProvider = 'auto',
   onTranscriptChange,
   onFinalSegment,
 } = {}) {
@@ -128,6 +129,7 @@ export function useDualAudioTranscript({
     const form = new FormData();
     form.append('audio', chunkBlob, `chunk-${Date.now()}.${inferExtensionFromMimeType(mimeType)}`);
     form.append('provider', provider);
+    form.append('transcribeProvider', transcribeProvider || 'auto');
     form.append('language', primaryLanguage);
     form.append('sourceMode', 'mic-system');
 
@@ -170,7 +172,7 @@ export function useDualAudioTranscript({
         setError(`${TRANSCRIBE_ERROR_PREFIX} ${message}`);
       }
     }
-  }, [primaryLanguage, provider]);
+  }, [primaryLanguage, provider, transcribeProvider]);
 
   useEffect(() => {
     if (!enabled) {
@@ -234,7 +236,10 @@ export function useDualAudioTranscript({
         systemSource.connect(destination);
 
         const mixedStream = destination.stream;
-        const mimeType = pickRecorderMimeType(provider);
+        const effectiveTranscribeProvider = String(transcribeProvider || provider || 'auto').toLowerCase();
+        const mimeType = pickRecorderMimeType(
+          effectiveTranscribeProvider === 'auto' ? provider : effectiveTranscribeProvider
+        );
         const recorder = mimeType
           ? new MediaRecorder(mixedStream, { mimeType })
           : new MediaRecorder(mixedStream);
@@ -255,7 +260,8 @@ export function useDualAudioTranscript({
 
         recorder.onstart = () => setIsListening(true);
         recorder.onstop = () => setIsListening(false);
-        recorder.start(CHUNK_MS);
+        const chunkMs = effectiveTranscribeProvider === 'gemini' ? 6000 : CHUNK_MS;
+        recorder.start(chunkMs);
         recorderRef.current = recorder;
 
         for (const track of systemStream.getVideoTracks()) {
@@ -279,7 +285,7 @@ export function useDualAudioTranscript({
       cancelled = true;
       stopCapture();
     };
-  }, [enabled, primaryLanguage, provider, stopCapture, transcribeChunk]);
+  }, [enabled, primaryLanguage, provider, transcribeProvider, stopCapture, transcribeChunk]);
 
   const clearTranscript = () => {
     transcriptRef.current = '';

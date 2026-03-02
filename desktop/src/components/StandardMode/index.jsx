@@ -142,6 +142,7 @@ export default function StandardMode({ onBack }) {
     enabled: isRunning && audioInputMode === 'mic-system',
     language: interviewLangs,
     provider: setup.aiProvider,
+    transcribeProvider: setup.sttProvider,
     onTranscriptChange: handleTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
   });
@@ -308,6 +309,7 @@ export default function StandardMode({ onBack }) {
             <span className="box-label">🎤 Transcript</span>
             <span className="transcript-lang-badge">
               Source: {audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic only'} |{' '}
+              STT: {setup.sttProvider || 'auto'} |{' '}
               Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
               {audioInputMode === 'mic' && interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
             </span>

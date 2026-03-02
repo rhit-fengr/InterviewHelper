@@ -222,6 +222,24 @@ describe('AI transcribe chunk route', () => {
     }));
   });
 
+  it('honors explicit transcribeProvider when provided', async () => {
+    transcribeAudioChunk.mockResolvedValue('ni hao');
+    await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .field('transcribeProvider', 'gemini')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.ogg',
+        contentType: 'audio/ogg',
+      });
+
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'gemini',
+      mimeType: 'audio/ogg',
+      audioBuffer: expect.any(Buffer),
+    }));
+  });
+
   it('returns 429 with cooldown guidance for transcription rate limit', async () => {
     transcribeAudioChunk.mockRejectedValue(Object.assign(
       new Error('rate limited'),

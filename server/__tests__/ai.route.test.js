@@ -6,7 +6,9 @@ jest.mock('../services/openai.service', () => ({
   transcribeAudioChunk: jest.fn(),
   getProviderCooldownRemainingMs: jest.fn(() => 30_000),
   normalizeProvider: jest.fn((provider) => provider || 'openai'),
+  normalizeTranscribeProvider: jest.fn((provider) => provider || 'openai'),
   isProviderConfigured: jest.fn(() => true),
+  isTranscribeProviderConfigured: jest.fn(() => true),
 }));
 
 const express = require('express');
@@ -16,7 +18,9 @@ const {
   generateAnswer,
   getProviderCooldownRemainingMs,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
   normalizeProvider,
+  normalizeTranscribeProvider,
   transcribeAudioChunk,
 } = require('../services/openai.service');
 
@@ -189,6 +193,8 @@ describe('AI transcribe chunk route', () => {
   afterEach(() => {
     jest.clearAllMocks();
     normalizeProvider.mockImplementation((provider) => provider || 'openai');
+    normalizeTranscribeProvider.mockImplementation((provider) => provider || 'openai');
+    isTranscribeProviderConfigured.mockReturnValue(true);
   });
 
   it('returns 400 when chunk is missing', async () => {
@@ -237,6 +243,25 @@ describe('AI transcribe chunk route', () => {
       provider: 'gemini',
       mimeType: 'audio/ogg',
       audioBuffer: expect.any(Buffer),
+    }));
+  });
+
+  it('auto-falls back to local transcribe provider when cloud providers are unavailable', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'local');
+    transcribeAudioChunk.mockResolvedValue('local transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'auto')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'local',
+      mimeType: 'audio/webm',
     }));
   });
 

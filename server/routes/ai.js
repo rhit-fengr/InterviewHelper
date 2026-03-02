@@ -7,7 +7,9 @@ const {
   detectQuestion,
   getProviderCooldownRemainingMs,
   normalizeProvider,
+  normalizeTranscribeProvider,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
   transcribeAudioChunk,
 } = require('../services/openai.service');
 
@@ -43,14 +45,15 @@ function getProviderFromRequest(req) {
 function getTranscribeProviderFromRequest(req) {
   const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
   if (typeof rawExplicit === 'string' && rawExplicit.trim()) {
-    const explicit = normalizeProvider(rawExplicit);
-    if (explicit === 'openai' || explicit === 'gemini') {
+    const explicit = normalizeTranscribeProvider(rawExplicit);
+    if (explicit === 'openai' || explicit === 'gemini' || explicit === 'local') {
       return explicit;
     }
   }
 
-  if (isProviderConfigured('openai')) return 'openai';
-  if (isProviderConfigured('gemini')) return 'gemini';
+  if (isTranscribeProviderConfigured('openai')) return 'openai';
+  if (isTranscribeProviderConfigured('gemini')) return 'gemini';
+  if (isTranscribeProviderConfigured('local')) return 'local';
 
   return getProviderFromRequest(req);
 }

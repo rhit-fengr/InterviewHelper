@@ -29,6 +29,8 @@ This document defines the next-step plan to evolve Interview AI Hamburger from i
 2. Provider strategy:
 - `OpenAI Whisper` for stable chunk transcription (default when configured).
 - `Gemini` as best-effort fallback.
+- `Browser-native Web Speech` for mic-only lightweight mode.
+- `Local Whisper Service` adapter (`LOCAL_TRANSCRIBE_URL`) for no-cloud/offline-friendly setups.
 - Optional future provider adapters:
   - Azure Speech (Windows-friendly enterprise option)
   - Google Cloud Speech-to-Text (dedicated STT engine)
@@ -79,4 +81,3 @@ Phase 4:
 - Recall-style meeting capture workflows: https://www.recall.ai/
 - Local transcription utility patterns: https://github.com/zackees/transcribe-anything
 - Live caption translation UX patterns: https://github.com/SakiRinn/LiveCaptions-Translator
-

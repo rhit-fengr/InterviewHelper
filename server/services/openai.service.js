@@ -3,6 +3,7 @@
 const OpenAI = require('openai');
 
 const SUPPORTED_PROVIDERS = ['openai', 'gemini'];
+const SUPPORTED_TRANSCRIBE_PROVIDERS = ['openai', 'gemini', 'local'];
 const DEFAULT_PROVIDER = normalizeProvider(process.env.AI_PROVIDER || 'openai');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
@@ -19,6 +20,7 @@ const GEMINI_BASE_URL = ensureTrailingSlash(
 const GEMINI_NATIVE_BASE_URL = (
   process.env.GEMINI_NATIVE_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
 ).replace(/\/+$/, '');
+const LOCAL_TRANSCRIBE_URL = String(process.env.LOCAL_TRANSCRIBE_URL || '').trim();
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -65,9 +67,21 @@ function normalizeProvider(raw) {
   return SUPPORTED_PROVIDERS.includes(normalized) ? normalized : 'openai';
 }
 
+function normalizeTranscribeProvider(raw) {
+  if (!raw || typeof raw !== 'string') return 'openai';
+  const normalized = raw.trim().toLowerCase();
+  return SUPPORTED_TRANSCRIBE_PROVIDERS.includes(normalized) ? normalized : 'openai';
+}
+
 function isProviderConfigured(provider) {
   const p = normalizeProvider(provider);
   return p === 'gemini' ? isGeminiConfigured : isConfigured;
+}
+
+function isTranscribeProviderConfigured(provider) {
+  const p = normalizeTranscribeProvider(provider);
+  if (p === 'local') return Boolean(LOCAL_TRANSCRIBE_URL);
+  return isProviderConfigured(p);
 }
 
 function getClient(provider) {
@@ -258,6 +272,39 @@ async function transcribeWithGemini({ audioBuffer, mimeType, languageHint }) {
   return text;
 }
 
+async function transcribeWithLocal({ audioBuffer, mimeType, languageHint }) {
+  if (!LOCAL_TRANSCRIBE_URL) {
+    const err = new Error('Audio transcription requires LOCAL_TRANSCRIBE_URL for local provider.');
+    err.status = 503;
+    throw err;
+  }
+
+  const normalizedMime = normalizeMimeType(mimeType);
+  const ext = inferExtensionFromMime(normalizedMime);
+  const fileName = `chunk.${ext}`;
+
+  const form = new FormData();
+  form.append('audio', new Blob([audioBuffer], { type: normalizedMime }), fileName);
+  const normalizedLang = sanitizeLanguageHint(languageHint);
+  if (normalizedLang) form.append('language', normalizedLang);
+
+  const response = await fetch(LOCAL_TRANSCRIBE_URL, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = body?.error || body?.message || `Local transcription failed (${response.status})`;
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+
+  const body = await response.json().catch(() => ({}));
+  return String(body?.text || body?.transcript || '').trim();
+}
+
 /**
  * Build a system prompt personalised for the candidate.
  */
@@ -389,13 +436,14 @@ async function transcribeAudioChunk({
     throw err;
   }
 
-  const selectedProvider = normalizeProvider(provider);
-  const transcriptionProvider = selectedProvider === 'gemini' ? 'gemini' : 'openai';
+  const transcriptionProvider = normalizeTranscribeProvider(provider);
 
-  if (!isProviderConfigured(transcriptionProvider)) {
+  if (!isTranscribeProviderConfigured(transcriptionProvider)) {
     const err = new Error(
       transcriptionProvider === 'gemini'
         ? 'Audio transcription requires GEMINI_API_KEY.'
+        : transcriptionProvider === 'local'
+          ? 'Audio transcription requires LOCAL_TRANSCRIBE_URL.'
         : 'Audio transcription requires OPENAI_API_KEY.'
     );
     err.status = 503;
@@ -409,6 +457,9 @@ async function transcribeAudioChunk({
   try {
     if (transcriptionProvider === 'gemini') {
       return await transcribeWithGemini({ audioBuffer, mimeType, languageHint });
+    }
+    if (transcriptionProvider === 'local') {
+      return await transcribeWithLocal({ audioBuffer, mimeType, languageHint });
     }
 
     const client = getClient(transcriptionProvider);
@@ -556,7 +607,9 @@ module.exports = {
   transcribeAudioChunk,
   buildSystemPrompt,
   normalizeProvider,
+  normalizeTranscribeProvider,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
   getProviderCooldownRemainingMs,
   isConfigured,
 };

@@ -4,7 +4,9 @@ const {
   buildSystemPrompt,
   isConfigured,
   normalizeProvider,
+  normalizeTranscribeProvider,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
 } = require('../services/openai.service');
 
 describe('buildSystemPrompt', () => {
@@ -44,7 +46,16 @@ describe('provider helpers', () => {
     expect(normalizeProvider('gemini')).toBe('gemini');
   });
 
+  it('normalizes unknown transcribe provider to default openai', () => {
+    expect(normalizeTranscribeProvider('unknown-provider')).toBe('openai');
+    expect(normalizeTranscribeProvider('local')).toBe('local');
+  });
+
   it('reports gemini provider as unconfigured when GEMINI_API_KEY is not set', () => {
     expect(isProviderConfigured('gemini')).toBe(false);
+  });
+
+  it('reports local transcribe provider as unconfigured when LOCAL_TRANSCRIBE_URL is not set', () => {
+    expect(isTranscribeProviderConfigured('local')).toBe(false);
   });
 });

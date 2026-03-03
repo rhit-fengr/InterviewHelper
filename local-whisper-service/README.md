@@ -2,6 +2,10 @@
 
 Local STT service for Interview AI Hamburger.
 
+This folder now supports two modes:
+- Bundled runtime mode (recommended for release `.exe`): Python runtime + dependencies + model are prebuilt during packaging.
+- Dev/manual mode: use system Python as before.
+
 ## 1. Create venv and install
 
 ```bash
@@ -23,7 +27,8 @@ Windows one-click launcher:
 start_local_whisper.bat
 ```
 
-If it exits immediately, run it from an existing `cmd` window so you can see the exact error (usually Python missing or pip install failure).
+If bundled runtime exists (`runtime/venv/...`), this launcher uses bundled Python directly and does not install anything at runtime.
+If bundled runtime does not exist, it falls back to system Python and installs dependencies on first run.
 
 ## 3. Server env wiring
 
@@ -47,6 +52,8 @@ Environment variables:
 - `WHISPER_BEAM_SIZE` (default: `1`)
 - `WHISPER_VAD_FILTER` (default: `true`)
 - `LOCAL_WHISPER_PORT` (default: `8765`)
+
+`WHISPER_MODEL_PATH` can point to a local model directory (takes precedence over `WHISPER_MODEL`).
 
 Example:
 
@@ -74,4 +81,30 @@ When running in packaged Electron app and using `Mic + System` with `Transcripti
 
 Notes:
 - If local service is already running outside the app, Electron reuses it and will not force-kill your external process.
-- Python dependencies are still required on the machine unless you later bundle a full Python runtime + models.
+
+## Build bundled runtime for installer
+
+From `desktop/`:
+
+```bash
+npm run prepare:local-whisper-runtime
+```
+
+This creates:
+
+- `local-whisper-service/runtime/venv` (bundled Python env + dependencies)
+- `local-whisper-service/runtime/models/<model>`
+- `local-whisper-service/runtime/default_model.txt`
+
+Model selection:
+
+```bash
+set WHISPER_BUNDLE_MODEL=small
+npm run prepare:local-whisper-runtime
+```
+
+Supported bundled models:
+- `tiny`, `tiny.en`, `base`, `base.en`, `small`, `small.en`
+- `medium`, `medium.en`
+- `large-v1`, `large-v2`, `large-v3`
+- `distil-large-v2`, `distil-large-v3`

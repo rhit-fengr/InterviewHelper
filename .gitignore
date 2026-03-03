@@ -18,6 +18,7 @@ desktop/node_modules/
 mobile/node_modules/
 desktop/package-lock.json
 local-whisper-service/.venv/
+local-whisper-service/runtime/
 local-whisper-service/__pycache__/
 local-whisper-service/*.pyc
 local-whisper-service/txt.txt

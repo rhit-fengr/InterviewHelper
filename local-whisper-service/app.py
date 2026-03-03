@@ -23,6 +23,7 @@ from faster_whisper import WhisperModel
 
 APP_NAME = "Interview AI Hamburger Local Whisper Service"
 MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
+MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", "").strip()
 DEVICE = os.getenv("WHISPER_DEVICE", "auto")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
@@ -48,8 +49,9 @@ def _normalize_language_hint(language: str) -> Optional[str]:
 def _get_model() -> WhisperModel:
     global _model
     if _model is None:
+        model_source = MODEL_PATH if MODEL_PATH else MODEL_NAME
         _model = WhisperModel(
-            MODEL_NAME,
+            model_source,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
         )
@@ -63,6 +65,7 @@ def health() -> JSONResponse:
             "status": "ok",
             "service": APP_NAME,
             "model": MODEL_NAME,
+            "modelPath": MODEL_PATH,
             "device": DEVICE,
             "computeType": COMPUTE_TYPE,
         }
@@ -110,4 +113,3 @@ async def transcribe(
                 os.remove(tmp_path)
             except OSError:
                 pass
-

@@ -7,11 +7,12 @@
     "start": "concurrently \"npm run server\" \"npm run react-start\" \"wait-on http://localhost:3000 http://localhost:4000 && electron .\"",
     "react-start": "cross-env BROWSER=none react-scripts start",
     "server": "cd ../server && npm run dev",
+    "prepare:local-whisper-runtime": "node scripts/prepare-local-whisper-runtime.js",
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder",
-    "build:win": "npm run react-build && electron-builder --win nsis --x64",
-    "build:win:unsigned": "npm run react-build && electron-builder --win nsis --x64 --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
-    "build:win:portable": "npm run react-build && electron-builder --win portable --x64",
+    "build:win": "npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win nsis --x64",
+    "build:win:unsigned": "npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win nsis --x64 --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
+    "build:win:portable": "npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win portable --x64",
     "release:win": "powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1",
     "release:win:unsigned": "powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1 -NoSign",
     "test": "react-scripts test"
@@ -52,7 +53,8 @@
           "app.py",
           "requirements.txt",
           "start_local_whisper.bat",
-          "README.md"
+          "README.md",
+          "runtime/**"
         ]
       }
     ],

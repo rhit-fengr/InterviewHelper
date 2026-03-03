@@ -70,7 +70,7 @@ interview-ai-hamburger/
 
 - Node.js 18+
 - An [OpenAI API key](https://platform.openai.com/api-keys) or a [Google Gemini API key](https://ai.google.dev/gemini-api/docs/api-key)
-- Python 3.10+ (optional, only for local Whisper STT service)
+- Python 3.10+ (required on build machine when preparing bundled local Whisper runtime)
 - **Chrome or Chromium-based browser / Electron** — Web Speech API is only available in Chromium. The desktop app runs inside Electron (which bundles Chromium), so speech recognition works out of the box. If you open the React app in Firefox or Safari without Electron, the `useTranscript` hook will display an error and disable the mic button.
 
 ### 1. Start the server
@@ -104,6 +104,7 @@ You can also run `local-whisper-service/start_local_whisper.bat` on Windows.
 
 In Electron runtime, when `audioInputMode=Mic + System` and `Transcription Provider` is `Auto` or `Local`, the app now attempts to auto-start local-whisper service and auto-release it when you stop listening.
 If needed, you can point Electron's health check to a different local port with `LOCAL_WHISPER_HEALTH_URL` (desktop app process env).
+For release installers, run `cd desktop && npm run prepare:local-whisper-runtime` before `build:win*` to embed Python runtime + deps + model into the package.
 
 ### 2. Start the desktop app
 
@@ -348,6 +349,7 @@ Subtitle-plugin evolution plan:
 - For non-cloud setup, start `local-whisper-service`, configure `LOCAL_TRANSCRIBE_URL`, and choose `Local Whisper Service` (or `Auto`).
 - If `start_local_whisper.bat` appears to do nothing, open `cmd` first and run it there to read the error; most common root causes are missing Python or failed pip install.
 - If you see `Python was not found` or local-whisper health-check timeout, install Python 3.10+ and ensure `python`/`py` is available in PATH, then relaunch the app.
+- If you are using packaged release with bundled runtime, this Python requirement is only for build machines, not end users.
 
 **App feels laggy or buttons are unresponsive in Chrome**
 - Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.

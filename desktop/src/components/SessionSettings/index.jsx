@@ -31,6 +31,7 @@ export default function SessionSettings({ onStartInterview, onUndetectable, onMo
   const { session, updateSession } = useInterviewStore();
 
   const toggle = (field) => (val) => updateSession({ [field]: val });
+  const audioInputMode = session.audioInputMode || 'mic';
 
   return (
     <div className="session-panel">
@@ -60,6 +61,29 @@ export default function SessionSettings({ onStartInterview, onUndetectable, onMo
           checked={session.showCustomInput}
           onChange={toggle('showCustomInput')}
         />
+
+        <div className="audio-mode-row">
+          <span className="audio-mode-label">Audio Source</span>
+          <div className="audio-mode-actions">
+            <button
+              type="button"
+              className={`audio-mode-btn ${audioInputMode === 'mic' ? 'audio-mode-btn-active' : ''}`}
+              onClick={() => updateSession({ audioInputMode: 'mic' })}
+            >
+              Mic only
+            </button>
+            <button
+              type="button"
+              className={`audio-mode-btn ${audioInputMode === 'mic-system' ? 'audio-mode-btn-active' : ''}`}
+              onClick={() => updateSession({ audioInputMode: 'mic-system' })}
+            >
+              Mic + System
+            </button>
+          </div>
+          <p className="audio-mode-hint">
+            Mic + System captures your microphone and meeting/system audio together.
+          </p>
+        </div>
       </div>
 
       <div className="action-group">

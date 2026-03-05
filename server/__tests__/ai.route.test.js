@@ -3,9 +3,13 @@
 jest.mock('../services/openai.service', () => ({
   generateAnswer: jest.fn(),
   detectQuestion: jest.fn(),
+  transcribeAudioChunk: jest.fn(),
   getProviderCooldownRemainingMs: jest.fn(() => 30_000),
   normalizeProvider: jest.fn((provider) => provider || 'openai'),
+  normalizeTranscribeProvider: jest.fn((provider) => provider || 'openai'),
   isProviderConfigured: jest.fn(() => true),
+  isTranscribeProviderConfigured: jest.fn(() => true),
+  AI_TRANSCRIBE_MAX_BYTES: 5 * 1024 * 1024,
 }));
 
 const express = require('express');
@@ -15,7 +19,10 @@ const {
   generateAnswer,
   getProviderCooldownRemainingMs,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
   normalizeProvider,
+  normalizeTranscribeProvider,
+  transcribeAudioChunk,
 } = require('../services/openai.service');
 
 describe('AI answer streaming route', () => {
@@ -172,5 +179,145 @@ describe('AI answer streaming route', () => {
     const questionSent = generateAnswer.mock.calls[0][0].question;
     expect(questionSent.length).toBeLessThanOrEqual(1600);
     expect(questionSent.endsWith('-tail')).toBe(true);
+  });
+});
+
+describe('AI transcribe chunk route', () => {
+  let app;
+
+  beforeEach(() => {
+    app = express();
+    app.use(express.json());
+    app.use('/api/ai', aiRouter);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    normalizeProvider.mockImplementation((provider) => provider || 'openai');
+    normalizeTranscribeProvider.mockImplementation((provider) => provider || 'openai');
+    isTranscribeProviderConfigured.mockReturnValue(true);
+  });
+
+  it('returns 400 when chunk is missing', async () => {
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('audio chunk is required');
+  });
+
+  it('returns transcribed text for uploaded chunk', async () => {
+    transcribeAudioChunk.mockResolvedValue('hello interviewer');
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .field('language', 'en-US')
+      .field('sourceMode', 'mic-system')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('hello interviewer');
+    expect(res.body.sourceMode).toBe('mic-system');
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai',
+      mimeType: 'audio/webm',
+      languageHint: 'en-US',
+      audioBuffer: expect.any(Buffer),
+    }));
+  });
+
+  it('honors explicit transcribeProvider when provided', async () => {
+    transcribeAudioChunk.mockResolvedValue('ni hao');
+    await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .field('transcribeProvider', 'gemini')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.ogg',
+        contentType: 'audio/ogg',
+      });
+
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'gemini',
+      mimeType: 'audio/ogg',
+      audioBuffer: expect.any(Buffer),
+    }));
+  });
+
+  it('auto-falls back to local transcribe provider when cloud providers are unavailable', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'local');
+    transcribeAudioChunk.mockResolvedValue('local transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'auto')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'local',
+      mimeType: 'audio/webm',
+    }));
+  });
+
+  it('auto prefers openai over local/gemini when openai is configured', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => (
+      provider === 'openai' || provider === 'local' || provider === 'gemini'
+    ));
+    transcribeAudioChunk.mockResolvedValue('openai transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'auto')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai',
+      mimeType: 'audio/webm',
+    }));
+  });
+
+  it('returns 429 with cooldown guidance for transcription rate limit', async () => {
+    transcribeAudioChunk.mockRejectedValue(Object.assign(
+      new Error('rate limited'),
+      { status: 429, provider: 'openai', retryAfterMs: 12_000 }
+    ));
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(429);
+    expect(res.body.error).toContain('Wait about 12s');
+  });
+
+  it('returns 503 message when transcription provider is not configured', async () => {
+    transcribeAudioChunk.mockRejectedValue(Object.assign(
+      new Error('Audio transcription requires GEMINI_API_KEY.'),
+      { status: 503, provider: 'gemini' }
+    ));
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'gemini')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.ogg',
+        contentType: 'audio/ogg',
+      });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('GEMINI_API_KEY');
   });
 });

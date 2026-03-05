@@ -3,16 +3,29 @@
 const OpenAI = require('openai');
 
 const SUPPORTED_PROVIDERS = ['openai', 'gemini'];
+const SUPPORTED_TRANSCRIBE_PROVIDERS = ['openai', 'gemini', 'local'];
 const DEFAULT_PROVIDER = normalizeProvider(process.env.AI_PROVIDER || 'openai');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const OPENAI_DETECT_MODEL = process.env.OPENAI_DETECT_MODEL || 'gpt-4o-mini';
+const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
+const DEFAULT_AI_TRANSCRIBE_MAX_BYTES = 5 * 1024 * 1024;
+const parsedTranscribeMaxBytes = Number(process.env.AI_TRANSCRIBE_MAX_BYTES);
+const AI_TRANSCRIBE_MAX_BYTES =
+  Number.isFinite(parsedTranscribeMaxBytes) && parsedTranscribeMaxBytes > 0
+    ? parsedTranscribeMaxBytes
+    : DEFAULT_AI_TRANSCRIBE_MAX_BYTES;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || GEMINI_MODEL;
+const GEMINI_TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || GEMINI_MODEL;
 const GEMINI_BASE_URL = ensureTrailingSlash(
   process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/'
 );
+const GEMINI_NATIVE_BASE_URL = (
+  process.env.GEMINI_NATIVE_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
+).replace(/\/+$/, '');
+const LOCAL_TRANSCRIBE_URL = String(process.env.LOCAL_TRANSCRIBE_URL || '').trim();
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -59,9 +72,21 @@ function normalizeProvider(raw) {
   return SUPPORTED_PROVIDERS.includes(normalized) ? normalized : 'openai';
 }
 
+function normalizeTranscribeProvider(raw) {
+  if (!raw || typeof raw !== 'string') return 'openai';
+  const normalized = raw.trim().toLowerCase();
+  return SUPPORTED_TRANSCRIBE_PROVIDERS.includes(normalized) ? normalized : 'openai';
+}
+
 function isProviderConfigured(provider) {
   const p = normalizeProvider(provider);
   return p === 'gemini' ? isGeminiConfigured : isConfigured;
+}
+
+function isTranscribeProviderConfigured(provider) {
+  const p = normalizeTranscribeProvider(provider);
+  if (p === 'local') return Boolean(LOCAL_TRANSCRIBE_URL);
+  return isProviderConfigured(p);
 }
 
 function getClient(provider) {
@@ -153,6 +178,136 @@ function sanitizeMessages(messages) {
       content: typeof m.content === 'string' ? m.content : String(m.content || ''),
     }))
     .filter((m) => m.content.trim().length > 0);
+}
+
+function inferExtensionFromMime(mimeType = '') {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.includes('mp4')) return 'mp4';
+  if (normalized.includes('mpeg')) return 'mp3';
+  if (normalized.includes('ogg')) return 'ogg';
+  if (normalized.includes('wav')) return 'wav';
+  return 'webm';
+}
+
+function normalizeMimeType(mimeType = 'audio/webm') {
+  const lower = String(mimeType || '').toLowerCase().split(';')[0].trim();
+  return lower || 'audio/webm';
+}
+
+function toGeminiAudioMimeType(mimeType = 'audio/webm') {
+  const normalized = normalizeMimeType(mimeType);
+  if (normalized === 'audio/mp3') return 'audio/mpeg';
+  return normalized;
+}
+
+function sanitizeLanguageHint(languageHint) {
+  const candidate = String(languageHint || '').trim();
+  if (!candidate) return '';
+  // Keep BCP-47-ish values only.
+  return /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(candidate) ? candidate : '';
+}
+
+function extractGeminiText(response = {}) {
+  const parts = response?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('\n')
+    .trim();
+}
+
+async function transcribeWithGemini({ audioBuffer, mimeType, languageHint }) {
+  const model = encodeURIComponent(GEMINI_TRANSCRIBE_MODEL);
+  const url = `${GEMINI_NATIVE_BASE_URL}/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const normalizedLang = sanitizeLanguageHint(languageHint);
+  const languageHintLine = normalizedLang
+    ? `Language hint: ${normalizedLang}. Keep the output in this language when possible.`
+    : 'No language hint provided. Detect language automatically.';
+
+  const payload = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: [
+              'You are a speech-to-text engine.',
+              'Transcribe the provided audio exactly.',
+              'Do not add commentary.',
+              languageHintLine,
+            ].join(' '),
+          },
+          {
+            inlineData: {
+              mimeType: toGeminiAudioMimeType(mimeType),
+              data: audioBuffer.toString('base64'),
+            },
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0,
+    },
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = body?.error?.message || `Gemini transcription failed (${response.status})`;
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+
+  const body = await response.json();
+  const text = extractGeminiText(body);
+  if (!text) {
+    const err = new Error(
+      'Gemini returned empty transcription for this chunk. For stable real-time STT, use OpenAI Whisper.'
+    );
+    err.status = 502;
+    throw err;
+  }
+  return text;
+}
+
+async function transcribeWithLocal({ audioBuffer, mimeType, languageHint }) {
+  if (!LOCAL_TRANSCRIBE_URL) {
+    const err = new Error('Audio transcription requires LOCAL_TRANSCRIBE_URL for local provider.');
+    err.status = 503;
+    throw err;
+  }
+
+  const normalizedMime = normalizeMimeType(mimeType);
+  const ext = inferExtensionFromMime(normalizedMime);
+  const fileName = `chunk.${ext}`;
+
+  const form = new FormData();
+  form.append('audio', new Blob([audioBuffer], { type: normalizedMime }), fileName);
+  const normalizedLang = sanitizeLanguageHint(languageHint);
+  if (normalizedLang) form.append('language', normalizedLang);
+
+  const response = await fetch(LOCAL_TRANSCRIBE_URL, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = body?.error || body?.message || body?.detail || `Local transcription failed (${response.status})`;
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
+  }
+
+  const body = await response.json().catch(() => ({}));
+  return String(body?.text || body?.transcript || '').trim();
 }
 
 /**
@@ -263,6 +418,75 @@ async function generateAnswer({
           if (!isGeminiBadRequest(retryErr)) throw retryErr;
         }
       }
+    }
+    throw err;
+  }
+}
+
+async function transcribeAudioChunk({
+  provider,
+  audioBuffer,
+  mimeType = 'audio/webm',
+  languageHint,
+}) {
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    const err = new Error('audio chunk is required');
+    err.status = 400;
+    throw err;
+  }
+
+  if (audioBuffer.length > AI_TRANSCRIBE_MAX_BYTES) {
+    const err = new Error(`audio chunk exceeds max size (${AI_TRANSCRIBE_MAX_BYTES} bytes)`);
+    err.status = 413;
+    throw err;
+  }
+
+  const transcriptionProvider = normalizeTranscribeProvider(provider);
+
+  if (!isTranscribeProviderConfigured(transcriptionProvider)) {
+    const err = new Error(
+      transcriptionProvider === 'gemini'
+        ? 'Audio transcription requires GEMINI_API_KEY.'
+        : transcriptionProvider === 'local'
+          ? 'Audio transcription requires LOCAL_TRANSCRIBE_URL.'
+        : 'Audio transcription requires OPENAI_API_KEY.'
+    );
+    err.status = 503;
+    throw err;
+  }
+
+  if (isProviderOnCooldown(transcriptionProvider)) {
+    throw buildRateLimitError(transcriptionProvider);
+  }
+
+  try {
+    if (transcriptionProvider === 'gemini') {
+      return await transcribeWithGemini({ audioBuffer, mimeType, languageHint });
+    }
+    if (transcriptionProvider === 'local') {
+      return await transcribeWithLocal({ audioBuffer, mimeType, languageHint });
+    }
+
+    const client = getClient(transcriptionProvider);
+    const file = await OpenAI.toFile(
+      audioBuffer,
+      `chunk.${inferExtensionFromMime(mimeType)}`,
+      { type: normalizeMimeType(mimeType) }
+    );
+
+    const payload = {
+      file,
+      model: OPENAI_TRANSCRIBE_MODEL,
+    };
+    const normalizedLang = sanitizeLanguageHint(languageHint);
+    if (normalizedLang) payload.language = normalizedLang;
+
+    const result = await client.audio.transcriptions.create(payload);
+    return String(result?.text || '').trim();
+  } catch (err) {
+    if (err?.status === 429) {
+      markProviderRateLimited(transcriptionProvider, err);
+      throw buildRateLimitError(transcriptionProvider);
     }
     throw err;
   }
@@ -385,9 +609,13 @@ function heuristicQuestionDetection(transcript) {
 module.exports = {
   generateAnswer,
   detectQuestion,
+  transcribeAudioChunk,
   buildSystemPrompt,
   normalizeProvider,
+  normalizeTranscribeProvider,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
   getProviderCooldownRemainingMs,
   isConfigured,
+  AI_TRANSCRIBE_MAX_BYTES,
 };

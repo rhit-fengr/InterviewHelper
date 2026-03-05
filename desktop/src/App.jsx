@@ -18,6 +18,7 @@ const VIEWS = {
 export default function App() {
   const [view, setView] = useState(VIEWS.SETUP);
   const { displaySettings, advancedSettings } = useInterviewStore();
+  const uiScale = Math.max(0.8, Math.min(1.6, (Number(displaySettings.fontSize) || 14) / 14));
 
   const navigate = (target) => setView(target);
 
@@ -29,15 +30,17 @@ export default function App() {
     window.electronAPI.setAlwaysOnTop(displaySettings.alwaysOnTop);
     window.electronAPI.setContentProtection(advancedSettings.hideFromScreenSharing);
     window.electronAPI.setSkipTaskbar(advancedSettings.hideAppIcon);
+    window.electronAPI.setZoomFactor(uiScale);
   }, [
     displaySettings.windowOpacity,
     displaySettings.alwaysOnTop,
     advancedSettings.hideFromScreenSharing,
     advancedSettings.hideAppIcon,
+    uiScale,
   ]);
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ '--ui-scale': uiScale }}>
       <TitleBar />
       <div className="app-content">
         {view === VIEWS.SETUP && (

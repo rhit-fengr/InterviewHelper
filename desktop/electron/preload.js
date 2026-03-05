@@ -13,7 +13,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   closeWindow: () => ipcRenderer.invoke('close-window'),
   setOpacity: (opacity) => ipcRenderer.invoke('set-opacity', opacity),
+  setZoomFactor: (factor) => ipcRenderer.invoke('set-zoom-factor', factor),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  ensureLocalWhisper: () => ipcRenderer.invoke('ensure-local-whisper'),
+  releaseLocalWhisper: () => ipcRenderer.invoke('release-local-whisper'),
+  getLocalWhisperStatus: () => ipcRenderer.invoke('local-whisper-status'),
 
   // Check if running inside Electron
   isElectron: true,

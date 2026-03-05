@@ -45,6 +45,20 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
+        <label className="form-label">Transcription Provider</label>
+        <select
+          className="form-select"
+          value={setup.sttProvider || 'auto'}
+          onChange={handleChange('sttProvider')}
+        >
+          <option value="auto">Auto (OpenAI -> Local -> Gemini)</option>
+          <option value="local">Local Whisper Service (no cloud)</option>
+          <option value="openai">OpenAI (Whisper)</option>
+          <option value="gemini">Gemini (best effort)</option>
+        </select>
+      </div>
+
+      <div className="form-group">
         <label className="form-label">Topic</label>
         <select className="form-select" value={setup.topic} onChange={handleChange('topic')}>
           {TOPICS.map((t) => (

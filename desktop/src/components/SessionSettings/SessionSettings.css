@@ -40,6 +40,54 @@
   padding: 4px 0;
 }
 
+.audio-mode-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+}
+
+.audio-mode-label {
+  color: #e2e8f0;
+  font-size: 13px;
+}
+
+.audio-mode-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.audio-mode-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: #cbd5e1;
+  cursor: pointer;
+  flex: 1;
+  font-size: 12px;
+  padding: 8px 10px;
+  transition: all 0.2s;
+}
+
+.audio-mode-btn:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f8fafc;
+}
+
+.audio-mode-btn-active {
+  background: rgba(124, 58, 237, 0.2);
+  border-color: #7c3aed;
+  color: #e9d5ff;
+}
+
+.audio-mode-hint {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;

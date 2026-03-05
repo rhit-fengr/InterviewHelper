@@ -9,6 +9,7 @@ This guide is for producing a Windows `.exe` installer with Electron Builder, si
 - Dependencies installed:
   - `cd desktop`
   - `npm install`
+- Python 3.10+ available on PATH for bundled local-whisper runtime preparation (`py -3` or `python`)
 - For signed release:
   - Authenticode code-signing certificate (`.pfx`)
   - Certificate password
@@ -55,10 +56,15 @@ What it does:
 ### 3.2 Manual build variants
 
 ```powershell
+npm run prepare:local-whisper-runtime
 npm run build:win
 npm run build:win:unsigned
 npm run build:win:portable
 ```
+
+Notes:
+- `prepare:local-whisper-runtime` downloads Python dependencies and the selected faster-whisper model into `local-whisper-service/runtime`.
+- Installer size will increase significantly after bundling runtime + model.
 
 ## 4. Expected Artifacts
 
@@ -102,6 +108,7 @@ Run these checks on a clean Windows VM or machine:
 - Start server (`server/npm run dev`), then run desktop app.
 - Start listening, verify transcript updates.
 - Trigger one AI answer using manual input.
+- Set `Audio Input Mode = Mic + System`, `Transcription Provider = Local` and verify local STT works even when system Python is not installed on the test machine.
 
 4. Settings behavior
 - Change font size and verify answer panel reflects it.

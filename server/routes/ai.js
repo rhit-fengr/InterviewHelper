@@ -1,18 +1,27 @@
 'use strict';
 
 const express = require('express');
+const multer = require('multer');
 const {
   generateAnswer,
   detectQuestion,
   getProviderCooldownRemainingMs,
   normalizeProvider,
+  normalizeTranscribeProvider,
   isProviderConfigured,
+  isTranscribeProviderConfigured,
+  transcribeAudioChunk,
+  AI_TRANSCRIBE_MAX_BYTES,
 } = require('../services/openai.service');
 
 const router = express.Router();
 const MAX_QUESTION_CHARS = Number(process.env.AI_MAX_QUESTION_CHARS || 1600);
 const MAX_TRANSCRIPT_CHARS = Number(process.env.AI_MAX_TRANSCRIPT_CHARS || 2400);
 const ENABLE_PROVIDER_FAILOVER = process.env.AI_ENABLE_PROVIDER_FAILOVER !== 'false';
+const transcribeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: AI_TRANSCRIBE_MAX_BYTES },
+});
 
 function clipTail(text, maxChars) {
   const value = String(text || '').trim();
@@ -32,6 +41,20 @@ function getProviderFromRequest(req) {
     process.env.AI_PROVIDER ||
     'openai'
   );
+}
+
+function getTranscribeProviderFromRequest(req) {
+  const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
+  const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
+  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local') {
+    return normalizeTranscribeProvider(explicitRaw);
+  }
+
+  if (isTranscribeProviderConfigured('openai')) return 'openai';
+  if (isTranscribeProviderConfigured('local')) return 'local';
+  if (isTranscribeProviderConfigured('gemini')) return 'gemini';
+
+  return getProviderFromRequest(req);
 }
 
 /**
@@ -164,6 +187,58 @@ router.post('/detect-question', async (req, res) => {
   } catch (err) {
     console.error('[AI detect-question] error:', err);
     res.status(500).json({ error: 'Question detection failed' });
+  }
+});
+
+/**
+ * POST /api/ai/transcribe-chunk
+ * multipart/form-data:
+ *  - audio: Blob/File chunk
+ *  - provider?: openai|gemini
+ *  - transcribeProvider?: auto|openai|local|gemini
+ *  - language?: BCP-47 hint
+ *  - sourceMode?: mic|mic-system
+ */
+router.post('/transcribe-chunk', (req, res, next) => {
+  transcribeUpload.single('audio')(req, res, (err) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Audio chunk exceeds the maximum allowed size.' });
+    }
+    if (err) return next(err);
+    next();
+  });
+}, async (req, res) => {
+  const provider = getTranscribeProviderFromRequest(req);
+  if (!req.file?.buffer) {
+    return res.status(400).json({ error: 'audio chunk is required' });
+  }
+
+  try {
+    const text = await transcribeAudioChunk({
+      provider,
+      audioBuffer: req.file.buffer,
+      mimeType: req.file.mimetype,
+      languageHint: req.body?.language,
+    });
+    res.json({ text, sourceMode: req.body?.sourceMode || 'unknown' });
+  } catch (err) {
+    console.error('[AI transcribe-chunk] error:', err);
+    const status = Number(err?.status) || 500;
+    if (status === 429) {
+      const cooldownMs = err?.retryAfterMs || getProviderCooldownRemainingMs(err?.provider || 'openai');
+      const cooldownSeconds = Math.max(1, Math.ceil(cooldownMs / 1000));
+      return res.status(429).json({
+        error: `Transcription rate limit reached. Wait about ${cooldownSeconds}s and retry.`,
+      });
+    }
+    if (status === 503) {
+      return res.status(503).json({
+        error: err?.message || `Transcription service (${provider}) is not configured.`,
+      });
+    }
+    return res.status(status).json({
+      error: err?.message || 'Audio transcription failed',
+    });
   }
 });
 

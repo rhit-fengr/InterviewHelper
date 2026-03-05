@@ -15,8 +15,32 @@ export function useAIAnswer() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const abortControllerRef = useRef(null);
+  const cooldownUntilRef = useRef(0);
+
+  const getCooldownRemainingMs = useCallback(
+    () => Math.max(0, cooldownUntilRef.current - Date.now()),
+    []
+  );
+
+  const markRateLimitCooldown = useCallback((message, fallbackMs = 30_000) => {
+    const text = String(message || '');
+    const secondMatch = text.match(/wait about\s+(\d+)\s*s/i);
+    const parsedSeconds = Number(secondMatch?.[1]);
+    const cooldownMs = Number.isFinite(parsedSeconds) && parsedSeconds > 0
+      ? parsedSeconds * 1000
+      : (/rate limit/i.test(text) ? fallbackMs : 0);
+    if (cooldownMs > 0) {
+      cooldownUntilRef.current = Math.max(cooldownUntilRef.current, Date.now() + cooldownMs);
+    }
+  }, []);
 
   const generateAnswer = useCallback(async ({ question, personalInfo, answerSettings, setup, conversationHistory }) => {
+    const cooldownRemainingMs = getCooldownRemainingMs();
+    if (cooldownRemainingMs > 0) {
+      setError(`Rate limit cooldown active. Wait about ${Math.ceil(cooldownRemainingMs / 1000)}s and try again.`);
+      return;
+    }
+
     // Cancel any in-flight request
     abortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -47,6 +71,7 @@ export function useAIAnswer() {
           const body = await response.json();
           if (body.error) message = body.error;
         } catch { /* ignore parse errors */ }
+        markRateLimitCooldown(message);
         throw new Error(message);
       }
 
@@ -68,7 +93,13 @@ export function useAIAnswer() {
             return true;
           }
           if (parsed.error) {
-            setError(parsed.error);
+            markRateLimitCooldown(parsed.error);
+            if (/rate limit/i.test(parsed.error)) {
+              const remaining = Math.max(1, Math.ceil(getCooldownRemainingMs() / 1000));
+              setError(`Rate limit reached. Wait about ${remaining}s and try again.`);
+            } else {
+              setError(parsed.error);
+            }
             return true;
           }
           if (parsed.text) {
@@ -111,18 +142,22 @@ export function useAIAnswer() {
       }
     } catch (err) {
       if (err.name !== 'AbortError') {
+        markRateLimitCooldown(err.message);
         // TypeError with 'fetch' in the message means the server is unreachable
         const isNetworkError = err.name === 'TypeError' && /fetch/i.test(err.message);
+        const cooldownLeftMs = getCooldownRemainingMs();
         setError(
           isNetworkError
             ? `Cannot connect to server at ${SERVER_URL}. Make sure the backend server is running (cd server && npm run dev).`
-            : err.message
+            : cooldownLeftMs > 0 && /rate limit/i.test(String(err.message))
+              ? `Rate limit reached. Wait about ${Math.ceil(cooldownLeftMs / 1000)}s and try again.`
+              : err.message
         );
       }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [getCooldownRemainingMs, markRateLimitCooldown]);
 
   const cancelGeneration = useCallback(() => {
     abortControllerRef.current?.abort();

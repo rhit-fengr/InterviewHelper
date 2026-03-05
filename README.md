@@ -49,6 +49,9 @@ interview-ai-hamburger/
 │   │   └── socket.service.js
 │   ├── app.js
 │   └── index.js
+├── local-whisper-service/     # Optional local Python STT service (/transcribe)
+│   ├── app.py
+│   └── requirements.txt
 └── mobile/                    # React Native (Expo) companion app
     ├── screens/
     │   ├── ConnectScreen.js   # Enter server URL + session code
@@ -67,6 +70,7 @@ interview-ai-hamburger/
 
 - Node.js 18+
 - An [OpenAI API key](https://platform.openai.com/api-keys) or a [Google Gemini API key](https://ai.google.dev/gemini-api/docs/api-key)
+- Python 3.10+ (required on build machine when preparing bundled local Whisper runtime)
 - **Chrome or Chromium-based browser / Electron** — Web Speech API is only available in Chromium. The desktop app runs inside Electron (which bundles Chromium), so speech recognition works out of the box. If you open the React app in Firefox or Safari without Electron, the `useTranscript` hook will display an error and disable the mic button.
 
 ### 1. Start the server
@@ -79,6 +83,28 @@ npm run dev
 ```
 
 The server starts on `http://localhost:4000`.
+
+### 1.5 Optional: Start local Whisper STT service
+
+```bash
+cd local-whisper-service
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app:app --host 127.0.0.1 --port 8765
+```
+
+Then set in `server/.env`:
+
+```bash
+LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8765/transcribe
+```
+
+You can also run `local-whisper-service/start_local_whisper.bat` on Windows.
+
+In Electron runtime, when `audioInputMode=Mic + System` and `Transcription Provider` is `Auto` or `Local`, the app now attempts to auto-start local-whisper service and auto-release it when you stop listening.
+If needed, you can point Electron's health check to a different local port with `LOCAL_WHISPER_HEALTH_URL` (desktop app process env).
+For release installers, run `cd desktop && npm run prepare:local-whisper-runtime` before `build:win*` to embed Python runtime + deps + model into the package.
 
 ### 2. Start the desktop app
 
@@ -111,6 +137,7 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 | Field | Description |
 |---|---|
 | AI Provider | `OpenAI` or `Google Gemini` |
+| Transcription Provider | `Auto` (OpenAI -> Local -> Gemini), `OpenAI`, `Gemini`, or `Local Whisper Service` |
 | Topic | Interview category (Software Engineering, Behavioral, etc.) |
 | Interview Language | One or more interviewer languages (auto-cycled when multiple are selected) |
 | Answer Language | Language for AI-generated answers |
@@ -286,6 +313,9 @@ npm run release:win           # Build + hashes + signature verification
 Detailed signing and installer acceptance checklist:
 - `desktop/RELEASE_WINDOWS.md`
 
+Subtitle-plugin evolution plan:
+- `docs/SUBTITLE_PLUGIN_ROADMAP.md`
+
 ---
 
 ## Tech Stack
@@ -309,6 +339,17 @@ Detailed signing and installer acceptance checklist:
 - Make sure you are running the app through Electron (not a non-Chromium browser).
 - Check that your OS microphone permission is granted for Electron.
 - Verify the **Interview Language** setting matches the language you are speaking.
+- `Mic only` mode already uses browser-native Web Speech API (Chrome/Edge runtime speech engine), no cloud STT required.
+
+**Mic + System has no transcript output**
+- In `Interview Setup`, set **Transcription Provider** to `Auto` (`OpenAI -> Local -> Gemini`) or `OpenAI` for stable real-time chunks.
+- Gemini chunk transcription is "best effort" and can return empty segments on short windows; this is not as reliable as Whisper-style STT.
+- If using `OpenAI` transcription, set `OPENAI_API_KEY` in `server/.env`.
+- If you intentionally use `Gemini` transcription, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).
+- For non-cloud setup, start `local-whisper-service`, configure `LOCAL_TRANSCRIBE_URL`, and choose `Local Whisper Service` (or `Auto`).
+- If `start_local_whisper.bat` appears to do nothing, open `cmd` first and run it there to read the error; most common root causes are missing Python or failed pip install.
+- If you see `Python was not found` or local-whisper health-check timeout, install Python 3.10+ and ensure `python`/`py` is available in PATH, then relaunch the app.
+- If you are using packaged release with bundled runtime, this Python requirement is only for build machines, not end users.
 
 **App feels laggy or buttons are unresponsive in Chrome**
 - Chrome's Web Speech API sends audio to Google's servers, which can introduce latency and cause brief UI stalls during heavy speech recognition activity. Microsoft Edge uses a local Windows speech recognition engine which is typically smoother.

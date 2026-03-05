@@ -617,4 +617,5 @@ module.exports = {
   isTranscribeProviderConfigured,
   getProviderCooldownRemainingMs,
   isConfigured,
+  AI_TRANSCRIBE_MAX_BYTES,
 };

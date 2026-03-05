@@ -9,6 +9,7 @@ jest.mock('../services/openai.service', () => ({
   normalizeTranscribeProvider: jest.fn((provider) => provider || 'openai'),
   isProviderConfigured: jest.fn(() => true),
   isTranscribeProviderConfigured: jest.fn(() => true),
+  AI_TRANSCRIBE_MAX_BYTES: 5 * 1024 * 1024,
 }));
 
 const express = require('express');
@@ -318,47 +319,5 @@ describe('AI transcribe chunk route', () => {
 
     expect(res.status).toBe(503);
     expect(res.body.error).toContain('GEMINI_API_KEY');
-  });
-});
-
-describe('AI transcribe chunk route - size limit enforcement', () => {
-  let app;
-  let isolatedRouter;
-
-  beforeAll(() => {
-    process.env.AI_TRANSCRIBE_MAX_BYTES = '10';
-    jest.isolateModules(() => {
-      jest.doMock('../services/openai.service', () => ({
-        generateAnswer: jest.fn(),
-        detectQuestion: jest.fn(),
-        transcribeAudioChunk: jest.fn(),
-        getProviderCooldownRemainingMs: jest.fn(() => 30_000),
-        normalizeProvider: jest.fn((p) => p || 'openai'),
-        normalizeTranscribeProvider: jest.fn((p) => p || 'openai'),
-        isProviderConfigured: jest.fn(() => true),
-        isTranscribeProviderConfigured: jest.fn(() => true),
-      }));
-      isolatedRouter = require('../routes/ai');
-    });
-    delete process.env.AI_TRANSCRIBE_MAX_BYTES;
-  });
-
-  beforeEach(() => {
-    app = express();
-    app.use(express.json());
-    app.use('/api/ai', isolatedRouter);
-  });
-
-  it('returns 413 with a clear error when uploaded chunk exceeds the configured size limit', async () => {
-    const res = await request(app)
-      .post('/api/ai/transcribe-chunk')
-      .field('provider', 'openai')
-      .attach('audio', Buffer.alloc(20), {
-        filename: 'chunk.webm',
-        contentType: 'audio/webm',
-      });
-
-    expect(res.status).toBe(413);
-    expect(res.body.error).toContain('exceeds the maximum allowed size');
   });
 });

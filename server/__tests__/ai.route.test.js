@@ -9,6 +9,7 @@ jest.mock('../services/openai.service', () => ({
   normalizeTranscribeProvider: jest.fn((provider) => provider || 'openai'),
   isProviderConfigured: jest.fn(() => true),
   isTranscribeProviderConfigured: jest.fn(() => true),
+  AI_TRANSCRIBE_MAX_BYTES: 5 * 1024 * 1024,
 }));
 
 const express = require('express');

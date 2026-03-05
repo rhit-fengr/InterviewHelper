@@ -190,6 +190,8 @@ export function useDualAudioTranscript({
 
     let cancelled = false;
     const start = async () => {
+      let startupMicStream = null;
+      let startupSystemStream = null;
       try {
         setError(null);
 
@@ -223,11 +225,13 @@ export function useDualAudioTranscript({
           },
           video: false,
         });
+        startupMicStream = micStream;
 
         const systemStream = await navigator.mediaDevices.getDisplayMedia({
           audio: true,
           video: true,
         });
+        startupSystemStream = systemStream;
 
         const systemAudioTracks = systemStream.getAudioTracks();
         if (systemAudioTracks.length === 0) {
@@ -242,6 +246,8 @@ export function useDualAudioTranscript({
 
         micStreamRef.current = micStream;
         systemStreamRef.current = systemStream;
+        startupMicStream = null;
+        startupSystemStream = null;
         uploadQueueRef.current = Promise.resolve();
 
         const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
@@ -297,6 +303,12 @@ export function useDualAudioTranscript({
           };
         }
       } catch (err) {
+        if (startupMicStream) {
+          startupMicStream.getTracks().forEach((track) => track.stop());
+        }
+        if (startupSystemStream) {
+          startupSystemStream.getTracks().forEach((track) => track.stop());
+        }
         const message = err?.message || 'Failed to start dual audio capture.';
         setError(message);
         stopCapture();

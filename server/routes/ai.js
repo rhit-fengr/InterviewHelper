@@ -11,23 +11,16 @@ const {
   isProviderConfigured,
   isTranscribeProviderConfigured,
   transcribeAudioChunk,
+  AI_TRANSCRIBE_MAX_BYTES,
 } = require('../services/openai.service');
 
 const router = express.Router();
 const MAX_QUESTION_CHARS = Number(process.env.AI_MAX_QUESTION_CHARS || 1600);
 const MAX_TRANSCRIPT_CHARS = Number(process.env.AI_MAX_TRANSCRIPT_CHARS || 2400);
 const ENABLE_PROVIDER_FAILOVER = process.env.AI_ENABLE_PROVIDER_FAILOVER !== 'false';
-
-const DEFAULT_MAX_TRANSCRIBE_BYTES = 5 * 1024 * 1024;
-const _parsedMaxTranscribeBytes = Number(process.env.AI_TRANSCRIBE_MAX_BYTES);
-const MAX_TRANSCRIBE_BYTES =
-  Number.isFinite(_parsedMaxTranscribeBytes) && _parsedMaxTranscribeBytes > 0
-    ? _parsedMaxTranscribeBytes
-    : DEFAULT_MAX_TRANSCRIBE_BYTES;
-
 const transcribeUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_TRANSCRIBE_BYTES },
+  limits: { fileSize: AI_TRANSCRIBE_MAX_BYTES },
 });
 
 function clipTail(text, maxChars) {
@@ -208,12 +201,10 @@ router.post('/detect-question', async (req, res) => {
  */
 router.post('/transcribe-chunk', (req, res, next) => {
   transcribeUpload.single('audio')(req, res, (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: `Audio chunk exceeds max allowed size (${MAX_TRANSCRIBE_BYTES} bytes).` });
-      }
-      return res.status(400).json({ error: err.message || 'File upload error.' });
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Audio chunk exceeds the maximum allowed size.' });
     }
+    if (err) return next(err);
     next();
   });
 }, async (req, res) => {

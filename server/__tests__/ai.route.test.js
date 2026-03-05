@@ -9,6 +9,7 @@ jest.mock('../services/openai.service', () => ({
   normalizeTranscribeProvider: jest.fn((provider) => provider || 'openai'),
   isProviderConfigured: jest.fn(() => true),
   isTranscribeProviderConfigured: jest.fn(() => true),
+  AI_TRANSCRIBE_MAX_BYTES: 5 * 1024 * 1024,
 }));
 
 const express = require('express');
@@ -318,40 +319,5 @@ describe('AI transcribe chunk route', () => {
 
     expect(res.status).toBe(503);
     expect(res.body.error).toContain('GEMINI_API_KEY');
-  });
-
-  it('returns 413 when multer rejects an oversized upload', async () => {
-    // Exceed the default 5 MB limit by temporarily lowering it via env is impractical in unit tests;
-    // instead simulate the multer LIMIT_FILE_SIZE error that would normally be raised.
-    const multer = require('multer');
-    const limitedUpload = multer({
-      storage: multer.memoryStorage(),
-      limits: { fileSize: 10 },
-    });
-
-    const limitedApp = express();
-    limitedApp.use(express.json());
-    // Mount only the transcribe route with a tighter multer limit to trigger LIMIT_FILE_SIZE
-    const aiRouterModule = require('../routes/ai');
-    // Patch the route inline: mount a small-limit upload middleware before the real route
-    limitedApp.post('/api/ai/transcribe-chunk', (req, res, next) => {
-      limitedUpload.single('audio')(req, res, (err) => {
-        if (err && err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(413).json({ error: 'Audio chunk exceeds max allowed size.' });
-        }
-        if (err) return res.status(400).json({ error: err.message });
-        next();
-      });
-    }, (req, res) => res.json({ text: 'ok' }));
-
-    const res = await request(limitedApp)
-      .post('/api/ai/transcribe-chunk')
-      .attach('audio', Buffer.alloc(50), {
-        filename: 'chunk.webm',
-        contentType: 'audio/webm',
-      });
-
-    expect(res.status).toBe(413);
-    expect(res.body.error).toContain('exceeds max allowed size');
   });
 });

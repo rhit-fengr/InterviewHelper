@@ -9,11 +9,12 @@ const DEFAULT_PROVIDER = normalizeProvider(process.env.AI_PROVIDER || 'openai');
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const OPENAI_DETECT_MODEL = process.env.OPENAI_DETECT_MODEL || 'gpt-4o-mini';
 const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
-const _parsedAITranscribeMaxBytes = Number(process.env.AI_TRANSCRIBE_MAX_BYTES);
+const DEFAULT_AI_TRANSCRIBE_MAX_BYTES = 5 * 1024 * 1024;
+const parsedTranscribeMaxBytes = Number(process.env.AI_TRANSCRIBE_MAX_BYTES);
 const AI_TRANSCRIBE_MAX_BYTES =
-  Number.isFinite(_parsedAITranscribeMaxBytes) && _parsedAITranscribeMaxBytes > 0
-    ? _parsedAITranscribeMaxBytes
-    : 5 * 1024 * 1024;
+  Number.isFinite(parsedTranscribeMaxBytes) && parsedTranscribeMaxBytes > 0
+    ? parsedTranscribeMaxBytes
+    : DEFAULT_AI_TRANSCRIBE_MAX_BYTES;
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || GEMINI_MODEL;
@@ -616,4 +617,5 @@ module.exports = {
   isTranscribeProviderConfigured,
   getProviderCooldownRemainingMs,
   isConfigured,
+  AI_TRANSCRIBE_MAX_BYTES,
 };

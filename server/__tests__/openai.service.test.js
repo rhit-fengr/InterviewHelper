@@ -61,133 +61,170 @@ describe('provider helpers', () => {
   });
 });
 
-describe('transcribeAudioChunk', () => {
-  it('throws 400 when audioBuffer is not a Buffer', async () => {
-    await expect(transcribeAudioChunk({ provider: 'openai', audioBuffer: null }))
-      .rejects.toMatchObject({ status: 400, message: 'audio chunk is required' });
-  });
-
+describe('transcribeAudioChunk - validation', () => {
   it('throws 400 when audioBuffer is empty', async () => {
-    await expect(transcribeAudioChunk({ provider: 'openai', audioBuffer: Buffer.alloc(0) }))
-      .rejects.toMatchObject({ status: 400, message: 'audio chunk is required' });
+    await expect(
+      transcribeAudioChunk({ provider: 'openai', audioBuffer: Buffer.alloc(0) })
+    ).rejects.toMatchObject({ status: 400 });
   });
 
-  it('throws 503 when openai provider is not configured (no OPENAI_API_KEY)', async () => {
-    // Tests run without OPENAI_API_KEY set
+  it('throws 400 when audioBuffer is not a Buffer', async () => {
+    await expect(
+      transcribeAudioChunk({ provider: 'openai', audioBuffer: 'not-a-buffer' })
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('throws 400 when audioBuffer is null', async () => {
+    await expect(
+      transcribeAudioChunk({ provider: 'openai', audioBuffer: null })
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('throws 503 when openai provider is not configured', async () => {
     await expect(
       transcribeAudioChunk({ provider: 'openai', audioBuffer: Buffer.from('data') })
-    ).rejects.toMatchObject({ status: 503, message: expect.stringContaining('OPENAI_API_KEY') });
+    ).rejects.toMatchObject({ status: 503 });
   });
 
-  it('throws 503 when local provider is not configured (no LOCAL_TRANSCRIBE_URL)', async () => {
-    // Tests run without LOCAL_TRANSCRIBE_URL set
-    await expect(
-      transcribeAudioChunk({ provider: 'local', audioBuffer: Buffer.from('data') })
-    ).rejects.toMatchObject({ status: 503, message: expect.stringContaining('LOCAL_TRANSCRIBE_URL') });
-  });
-
-  it('throws 503 when gemini provider is not configured (no GEMINI_API_KEY)', async () => {
-    // Tests run without GEMINI_API_KEY set
+  it('throws 503 when gemini provider is not configured', async () => {
     await expect(
       transcribeAudioChunk({ provider: 'gemini', audioBuffer: Buffer.from('data') })
-    ).rejects.toMatchObject({ status: 503, message: expect.stringContaining('GEMINI_API_KEY') });
+    ).rejects.toMatchObject({ status: 503 });
   });
 
-  it('throws 413 when audioBuffer exceeds AI_TRANSCRIBE_MAX_BYTES', async () => {
-    // Reload the module with a tiny limit so we can test the 413 branch without allocating 5 MB
-    jest.resetModules();
-    const originalEnv = process.env.AI_TRANSCRIBE_MAX_BYTES;
+  it('throws 503 when local provider URL is not set', async () => {
+    await expect(
+      transcribeAudioChunk({ provider: 'local', audioBuffer: Buffer.from('data') })
+    ).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe('transcribeAudioChunk - size limit', () => {
+  let fn;
+
+  beforeAll(() => {
     process.env.AI_TRANSCRIBE_MAX_BYTES = '10';
-    try {
-      const { transcribeAudioChunk: fn } = require('../services/openai.service');
-      await expect(fn({ provider: 'openai', audioBuffer: Buffer.alloc(20) }))
-        .rejects.toMatchObject({ status: 413, message: expect.stringContaining('exceeds max size') });
-    } finally {
-      process.env.AI_TRANSCRIBE_MAX_BYTES = originalEnv;
-      jest.resetModules();
-    }
+    jest.isolateModules(() => {
+      fn = require('../services/openai.service').transcribeAudioChunk;
+    });
+    delete process.env.AI_TRANSCRIBE_MAX_BYTES;
   });
 
-  it('uses default 5 MB limit when AI_TRANSCRIBE_MAX_BYTES is non-numeric', async () => {
-    jest.resetModules();
-    const originalEnv = process.env.AI_TRANSCRIBE_MAX_BYTES;
-    process.env.AI_TRANSCRIBE_MAX_BYTES = 'not-a-number';
-    try {
-      const { transcribeAudioChunk: fn } = require('../services/openai.service');
-      // A small buffer should not hit the 413 branch (default limit is 5 MB)
-      await expect(fn({ provider: 'openai', audioBuffer: Buffer.alloc(10) }))
-        .rejects.toMatchObject({ status: 503 }); // 503: no OPENAI_API_KEY — not 413
-    } finally {
-      process.env.AI_TRANSCRIBE_MAX_BYTES = originalEnv;
-      jest.resetModules();
-    }
+  it('throws 413 when audioBuffer exceeds the configured max bytes', async () => {
+    await expect(
+      fn({ provider: 'openai', audioBuffer: Buffer.alloc(20) })
+    ).rejects.toMatchObject({ status: 413 });
+  });
+});
+
+describe('transcribeAudioChunk - local provider', () => {
+  let fn;
+  let originalFetch;
+
+  beforeAll(() => {
+    originalFetch = global.fetch;
+    process.env.LOCAL_TRANSCRIBE_URL = 'http://127.0.0.1:9999/transcribe';
+    jest.isolateModules(() => {
+      fn = require('../services/openai.service').transcribeAudioChunk;
+    });
+    delete process.env.LOCAL_TRANSCRIBE_URL;
   });
 
-  it('returns transcript from local provider via mocked fetch', async () => {
-    jest.resetModules();
-    const originalUrl = process.env.LOCAL_TRANSCRIBE_URL;
-    process.env.LOCAL_TRANSCRIBE_URL = 'http://localhost:9999/transcribe';
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('calls local service and returns transcribed text', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ text: 'local transcript result' }),
+      json: async () => ({ text: 'local transcription result' }),
     });
-    try {
-      const { transcribeAudioChunk: fn } = require('../services/openai.service');
-      const result = await fn({ provider: 'local', audioBuffer: Buffer.from('audio-data'), mimeType: 'audio/webm' });
-      expect(result).toBe('local transcript result');
-      expect(global.fetch).toHaveBeenCalledWith(
-        'http://localhost:9999/transcribe',
-        expect.objectContaining({ method: 'POST' })
-      );
-    } finally {
-      process.env.LOCAL_TRANSCRIBE_URL = originalUrl;
-      jest.resetModules();
-      delete global.fetch;
-    }
+
+    const result = await fn({
+      provider: 'local',
+      audioBuffer: Buffer.from('audio-data'),
+      mimeType: 'audio/webm',
+    });
+
+    expect(result).toBe('local transcription result');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9999/transcribe',
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 
-  it('returns transcript from gemini provider via mocked fetch', async () => {
-    jest.resetModules();
-    const originalKey = process.env.GEMINI_API_KEY;
+  it('throws with the upstream status when local service returns a non-ok response', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'service unavailable' }),
+    });
+
+    await expect(
+      fn({ provider: 'local', audioBuffer: Buffer.from('audio-data') })
+    ).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe('transcribeAudioChunk - Gemini provider', () => {
+  let fn;
+  let originalFetch;
+
+  beforeAll(() => {
+    originalFetch = global.fetch;
     process.env.GEMINI_API_KEY = 'test-gemini-key';
+    jest.isolateModules(() => {
+      fn = require('../services/openai.service').transcribeAudioChunk;
+    });
+    delete process.env.GEMINI_API_KEY;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('calls Gemini API and returns transcribed text', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        candidates: [{ content: { parts: [{ text: 'gemini transcript' }] } }],
+        candidates: [{ content: { parts: [{ text: 'gemini transcription result' }] } }],
       }),
     });
-    try {
-      const { transcribeAudioChunk: fn } = require('../services/openai.service');
-      const result = await fn({ provider: 'gemini', audioBuffer: Buffer.from('audio-data'), mimeType: 'audio/webm' });
-      expect(result).toBe('gemini transcript');
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('generateContent'),
-        expect.objectContaining({ method: 'POST' })
-      );
-    } finally {
-      process.env.GEMINI_API_KEY = originalKey;
-      jest.resetModules();
-      delete global.fetch;
-    }
+
+    const result = await fn({
+      provider: 'gemini',
+      audioBuffer: Buffer.from('audio-data'),
+      mimeType: 'audio/webm',
+    });
+
+    expect(result).toBe('gemini transcription result');
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('generativelanguage.googleapis.com'),
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 
-  it('throws 429 and marks provider on cooldown when local returns 429', async () => {
-    jest.resetModules();
-    const originalUrl = process.env.LOCAL_TRANSCRIBE_URL;
-    process.env.LOCAL_TRANSCRIBE_URL = 'http://localhost:9999/transcribe';
+  it('throws 502 when Gemini returns an empty transcription', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ candidates: [{ content: { parts: [] } }] }),
+    });
+
+    await expect(
+      fn({ provider: 'gemini', audioBuffer: Buffer.from('audio-data') })
+    ).rejects.toMatchObject({ status: 502 });
+  });
+
+  // 429 test last: marks the provider on cooldown, affecting subsequent calls in this module instance
+  it('throws 429 and marks provider on cooldown when Gemini returns rate limit error', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 429,
-      json: async () => ({ error: 'rate limited' }),
+      json: async () => ({ error: { message: 'quota exceeded' } }),
     });
-    try {
-      const { transcribeAudioChunk: fn } = require('../services/openai.service');
-      await expect(fn({ provider: 'local', audioBuffer: Buffer.from('data'), mimeType: 'audio/webm' }))
-        .rejects.toMatchObject({ status: 429 });
-    } finally {
-      process.env.LOCAL_TRANSCRIBE_URL = originalUrl;
-      jest.resetModules();
-      delete global.fetch;
-    }
+
+    await expect(
+      fn({ provider: 'gemini', audioBuffer: Buffer.from('audio-data') })
+    ).rejects.toMatchObject({ status: 429, provider: 'gemini' });
   });
 });

@@ -21,6 +21,7 @@ const LOCAL_WHISPER_START_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.LOCAL_WHISPER_START_TIMEOUT_MS || 90_000)
 );
+const HEALTH_CHECK_TIMEOUT_MS = 1500;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,11 +69,15 @@ function resolveLocalWhisperScriptPath() {
 }
 
 async function isLocalWhisperHealthy() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
   try {
-    const res = await fetch(LOCAL_WHISPER_HEALTH_URL, { method: 'GET' });
+    const res = await fetch(LOCAL_WHISPER_HEALTH_URL, { method: 'GET', signal: controller.signal });
     return res.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

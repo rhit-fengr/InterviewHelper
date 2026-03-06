@@ -287,6 +287,62 @@ describe('AI transcribe chunk route', () => {
     }));
   });
 
+  it('auto failovers to local when openai transcription is unavailable at runtime', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => (
+      provider === 'openai' || provider === 'local' || provider === 'gemini'
+    ));
+    transcribeAudioChunk
+      .mockRejectedValueOnce(Object.assign(new Error('openai unavailable'), { status: 503 }))
+      .mockResolvedValueOnce('local transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'auto')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('local transcript');
+    expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      provider: 'openai',
+      mimeType: 'audio/webm',
+    }));
+    expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      provider: 'local',
+      mimeType: 'audio/webm',
+    }));
+  });
+
+  it('auto failovers to gemini when local transcription is unavailable at runtime', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => (
+      provider === 'local' || provider === 'gemini'
+    ));
+    transcribeAudioChunk
+      .mockRejectedValueOnce(Object.assign(new Error('local down'), { status: 503 }))
+      .mockResolvedValueOnce('gemini transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'auto')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('gemini transcript');
+    expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      provider: 'local',
+      mimeType: 'audio/webm',
+    }));
+    expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      provider: 'gemini',
+      mimeType: 'audio/webm',
+    }));
+  });
+
   it('returns 429 with cooldown guidance for transcription rate limit', async () => {
     transcribeAudioChunk.mockRejectedValue(Object.assign(
       new Error('rate limited'),

@@ -110,15 +110,16 @@ function spawnLocalWhisperProcess() {
     };
   }
 
-  const command = `""${scriptPath}" --quiet"`;
+  const command = `"${scriptPath}" --quiet`;
   localWhisperRecentLogs = [];
   localWhisperLastExitCode = null;
-  const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
+  const child = spawn(command, {
     cwd: path.dirname(scriptPath),
     env: {
       ...process.env,
       LOCAL_WHISPER_PORT: getLocalWhisperPortFromHealthUrl(),
     },
+    shell: true,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -280,8 +281,8 @@ function createWindow() {
 app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      const preferredSource = sources.find((source) => source.name === 'Entire Screen') || sources[0];
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      const preferredSource = sources[0];
       if (!preferredSource) {
         callback({ video: null, audio: null });
         return;
@@ -295,7 +296,7 @@ app.whenReady().then(() => {
     } catch {
       callback({ video: null, audio: null });
     }
-  }, { useSystemPicker: true });
+  }, { useSystemPicker: false });
 
   createWindow();
 

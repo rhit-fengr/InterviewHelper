@@ -57,6 +57,27 @@ function getTranscribeProviderFromRequest(req) {
   return getProviderFromRequest(req);
 }
 
+function getTranscribeProviderChain(req) {
+  const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
+  const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
+  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local') {
+    return [normalizeTranscribeProvider(explicitRaw)];
+  }
+
+  const candidates = ['openai', 'local', 'gemini'].filter((provider) => (
+    isTranscribeProviderConfigured(provider)
+  ));
+
+  if (candidates.length > 0) return candidates;
+  return [getTranscribeProviderFromRequest(req)];
+}
+
+function canFailoverTranscribeError(err) {
+  const status = Number(err?.status) || 0;
+  // Provider/runtime issues that are usually recoverable by trying the next provider.
+  return [429, 500, 502, 503, 504].includes(status);
+}
+
 /**
  * POST /api/ai/answer
  * Body: { question, personalInfo, answerSettings, setup, conversationHistory, provider? }
@@ -208,19 +229,39 @@ router.post('/transcribe-chunk', (req, res, next) => {
     next();
   });
 }, async (req, res) => {
-  const provider = getTranscribeProviderFromRequest(req);
+  const providerChain = getTranscribeProviderChain(req);
   if (!req.file?.buffer) {
     return res.status(400).json({ error: 'audio chunk is required' });
   }
 
   try {
-    const text = await transcribeAudioChunk({
-      provider,
-      audioBuffer: req.file.buffer,
-      mimeType: req.file.mimetype,
-      languageHint: req.body?.language,
-    });
-    res.json({ text, sourceMode: req.body?.sourceMode || 'unknown' });
+    let lastError = null;
+    for (let index = 0; index < providerChain.length; index += 1) {
+      const provider = providerChain[index];
+      try {
+        const text = await transcribeAudioChunk({
+          provider,
+          audioBuffer: req.file.buffer,
+          mimeType: req.file.mimetype,
+          languageHint: req.body?.language,
+        });
+        return res.json({
+          text,
+          sourceMode: req.body?.sourceMode || 'unknown',
+          providerUsed: provider,
+        });
+      } catch (err) {
+        lastError = err;
+        const isLastAttempt = index >= providerChain.length - 1;
+        if (isLastAttempt || !canFailoverTranscribeError(err)) {
+          throw err;
+        }
+        console.warn(
+          `[AI transcribe-chunk] provider ${provider} failed with status ${Number(err?.status) || 500}; trying next provider`
+        );
+      }
+    }
+    throw lastError || new Error('Audio transcription failed');
   } catch (err) {
     console.error('[AI transcribe-chunk] error:', err);
     const status = Number(err?.status) || 500;
@@ -233,7 +274,7 @@ router.post('/transcribe-chunk', (req, res, next) => {
     }
     if (status === 503) {
       return res.status(503).json({
-        error: err?.message || `Transcription service (${provider}) is not configured.`,
+        error: err?.message || `Transcription service (${providerChain[0] || 'unknown'}) is not configured.`,
       });
     }
     return res.status(status).json({

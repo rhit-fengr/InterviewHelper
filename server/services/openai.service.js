@@ -1,6 +1,9 @@
 'use strict';
 
+const { spawn } = require('child_process');
+const fs = require('fs');
 const OpenAI = require('openai');
+const path = require('path');
 
 const SUPPORTED_PROVIDERS = ['openai', 'gemini'];
 const SUPPORTED_TRANSCRIBE_PROVIDERS = ['openai', 'gemini', 'local'];
@@ -26,6 +29,14 @@ const GEMINI_NATIVE_BASE_URL = (
   process.env.GEMINI_NATIVE_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
 ).replace(/\/+$/, '');
 const LOCAL_TRANSCRIBE_URL = String(process.env.LOCAL_TRANSCRIBE_URL || '').trim();
+const LOCAL_TRANSCRIBE_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.LOCAL_TRANSCRIBE_TIMEOUT_MS || 120_000)
+);
+const LOCAL_TRANSCRIBE_RETRIES = Math.max(
+  0,
+  Number(process.env.LOCAL_TRANSCRIBE_RETRIES || 1)
+);
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -59,6 +70,11 @@ const RATE_LIMIT_COOLDOWN_MS = Number(process.env.AI_RATE_LIMIT_COOLDOWN_MS || 6
 const RATE_LIMIT_MAX_COOLDOWN_MS = Number(process.env.AI_RATE_LIMIT_MAX_COOLDOWN_MS || 300_000);
 /** provider -> epoch ms */
 const providerCooldownUntil = new Map();
+let localWhisperBootPromise = null;
+let localWhisperManagedProcess = null;
+let localWhisperRecentLogs = [];
+let localWhisperLastExitCode = null;
+let localWhisperLastStartError = '';
 
 function ensureTrailingSlash(url) {
   return typeof url === 'string' && !url.endsWith('/')
@@ -207,6 +223,189 @@ function sanitizeLanguageHint(languageHint) {
   return /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(candidate) ? candidate : '';
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function appendLocalWhisperLog(text) {
+  const line = String(text || '').trim();
+  if (!line) return;
+  localWhisperRecentLogs.push(line);
+  if (localWhisperRecentLogs.length > 80) {
+    localWhisperRecentLogs = localWhisperRecentLogs.slice(-80);
+  }
+}
+
+function getLocalWhisperFailureMessage(baseMessage) {
+  const recent = localWhisperRecentLogs.slice(-12);
+  const joined = recent.join('\n');
+  let hint = '';
+
+  if (/python was not found/i.test(joined) || /python.+not found/i.test(joined)) {
+    hint = 'Python 3.10+ is required for local transcription, or bundle runtime/service in the installer build.';
+  } else if (/no module named/i.test(joined) || /module not found/i.test(joined)) {
+    hint = 'Local whisper dependencies are missing. Re-run local whisper runtime preparation.';
+  } else if (/operable program or batch file/i.test(joined)) {
+    hint = 'A runtime command failed to start. Verify local-whisper-service/start_local_whisper.bat and bundled runtime files.';
+  }
+
+  const lastLine = recent.length > 0 ? recent[recent.length - 1] : '';
+  return [baseMessage, hint, lastLine ? `Last log: ${lastLine}` : '']
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+function isTransientLocalFetchError(err) {
+  const code = err?.cause?.code || err?.code || '';
+  return [
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_SOCKET',
+  ].includes(code);
+}
+
+function getLocalWhisperHealthUrl() {
+  try {
+    const parsed = new URL(LOCAL_TRANSCRIBE_URL);
+    parsed.pathname = '/health';
+    parsed.search = '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+function getLocalWhisperPortFromUrl() {
+  try {
+    const parsed = new URL(LOCAL_TRANSCRIBE_URL);
+    return parsed.port || '8765';
+  } catch {
+    return '8765';
+  }
+}
+
+function resolveLocalWhisperLauncherPath() {
+  // Server lives in "<repo>/server/services"; launcher is in "<repo>/local-whisper-service".
+  return path.resolve(__dirname, '../../local-whisper-service/start_local_whisper.bat');
+}
+
+async function isLocalWhisperHealthy() {
+  const healthUrl = getLocalWhisperHealthUrl();
+  if (!healthUrl) return false;
+  try {
+    const response = await fetch(healthUrl, { method: 'GET' });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function canAutoStartLocalWhisper() {
+  if (process.platform !== 'win32') return false;
+  if (!LOCAL_TRANSCRIBE_URL) return false;
+  try {
+    const parsed = new URL(LOCAL_TRANSCRIBE_URL);
+    return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
+function spawnLocalWhisperForServer() {
+  const launcher = resolveLocalWhisperLauncherPath();
+  if (!fs.existsSync(launcher)) {
+    throw new Error(`local whisper launcher not found: ${launcher}`);
+  }
+  localWhisperRecentLogs = [];
+  localWhisperLastExitCode = null;
+  localWhisperLastStartError = '';
+  const cmd = `"${launcher}" --quiet`;
+  const child = spawn(cmd, {
+    shell: true,
+    cwd: path.dirname(launcher),
+    env: {
+      ...process.env,
+      LOCAL_WHISPER_PORT: getLocalWhisperPortFromUrl(),
+    },
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stdout?.on('data', (buf) => {
+    const lines = String(buf || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      appendLocalWhisperLog(line);
+      console.log('[local-whisper]', line);
+    }
+  });
+  child.stderr?.on('data', (buf) => {
+    const lines = String(buf || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      appendLocalWhisperLog(line);
+      console.error('[local-whisper]', line);
+    }
+  });
+
+  localWhisperManagedProcess = child;
+  child.once('exit', (code) => {
+    localWhisperLastExitCode = Number.isInteger(code) ? code : -1;
+    if (localWhisperManagedProcess && localWhisperManagedProcess.pid === child.pid) {
+      localWhisperManagedProcess = null;
+    }
+    if (code !== 0) {
+      console.error(`[local-whisper] launcher exited with code ${code}`);
+    }
+  });
+  return child;
+}
+
+async function ensureLocalWhisperRunning() {
+  if (!canAutoStartLocalWhisper()) return false;
+  if (await isLocalWhisperHealthy()) return true;
+
+  if (!localWhisperBootPromise) {
+    localWhisperBootPromise = (async () => {
+      const child = spawnLocalWhisperForServer();
+      const expectedPid = child?.pid;
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        if (await isLocalWhisperHealthy()) return true;
+        if (!localWhisperManagedProcess || localWhisperManagedProcess.pid !== expectedPid) {
+          const exitSuffix = localWhisperLastExitCode !== null
+            ? ` (exit code ${localWhisperLastExitCode})`
+            : '';
+          localWhisperLastStartError = getLocalWhisperFailureMessage(
+            `Local whisper launcher exited before health check${exitSuffix}.`
+          );
+          return false;
+        }
+        await sleep(1000);
+      }
+      localWhisperLastStartError = getLocalWhisperFailureMessage(
+        'Timed out waiting for local whisper service health check.'
+      );
+      return false;
+    })().catch((err) => {
+      localWhisperLastStartError = getLocalWhisperFailureMessage(
+        err?.message || 'Failed to start local whisper service.'
+      );
+      return false;
+    }).finally(() => {
+      localWhisperBootPromise = null;
+    });
+  }
+  return Boolean(await localWhisperBootPromise);
+}
+
 function extractGeminiText(response = {}) {
   const parts = response?.candidates?.[0]?.content?.parts;
   if (!Array.isArray(parts)) return '';
@@ -277,7 +476,7 @@ async function transcribeWithGemini({ audioBuffer, mimeType, languageHint }) {
   return text;
 }
 
-async function transcribeWithLocal({ audioBuffer, mimeType, languageHint }) {
+async function transcribeWithLocal({ audioBuffer, mimeType, languageHint, allowAutoStart = true }) {
   if (!LOCAL_TRANSCRIBE_URL) {
     const err = new Error('Audio transcription requires LOCAL_TRANSCRIBE_URL for local provider.');
     err.status = 503;
@@ -288,19 +487,76 @@ async function transcribeWithLocal({ audioBuffer, mimeType, languageHint }) {
   const ext = inferExtensionFromMime(normalizedMime);
   const fileName = `chunk.${ext}`;
 
-  const form = new FormData();
-  form.append('audio', new Blob([audioBuffer], { type: normalizedMime }), fileName);
   const normalizedLang = sanitizeLanguageHint(languageHint);
-  if (normalizedLang) form.append('language', normalizedLang);
+  let response;
+  let lastFetchError = null;
 
-  const response = await fetch(LOCAL_TRANSCRIBE_URL, {
-    method: 'POST',
-    body: form,
-  });
+  for (let attempt = 0; attempt <= LOCAL_TRANSCRIBE_RETRIES; attempt += 1) {
+    const form = new FormData();
+    form.append('audio', new Blob([audioBuffer], { type: normalizedMime }), fileName);
+    if (normalizedLang) form.append('language', normalizedLang);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), LOCAL_TRANSCRIBE_TIMEOUT_MS);
+    try {
+      response = await fetch(LOCAL_TRANSCRIBE_URL, {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      lastFetchError = null;
+      break;
+    } catch (err) {
+      clearTimeout(timeout);
+      lastFetchError = err;
+      if (attempt >= LOCAL_TRANSCRIBE_RETRIES || !isTransientLocalFetchError(err)) {
+        break;
+      }
+      await sleep(250 * (attempt + 1));
+    }
+  }
+
+  if (!response) {
+    if (
+      allowAutoStart &&
+      canAutoStartLocalWhisper() &&
+      isTransientLocalFetchError(lastFetchError)
+    ) {
+      const started = await ensureLocalWhisperRunning();
+      if (started) {
+        return transcribeWithLocal({
+          audioBuffer,
+          mimeType,
+          languageHint,
+          allowAutoStart: false,
+        });
+      }
+    }
+    if (lastFetchError?.name === 'AbortError') {
+      const timeoutErr = new Error(
+        `Local transcription timed out after ${Math.ceil(LOCAL_TRANSCRIBE_TIMEOUT_MS / 1000)}s.`
+      );
+      timeoutErr.status = 504;
+      throw timeoutErr;
+    }
+    const details = localWhisperLastStartError
+      || (lastFetchError?.cause?.code ? `Last error code: ${lastFetchError.cause.code}.` : '');
+    const fetchErr = new Error([
+      'Cannot reach local transcription service. Check that local whisper is running.',
+      details,
+    ].filter(Boolean).join(' '));
+    fetchErr.status = 503;
+    throw fetchErr;
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const message = body?.error || body?.message || body?.detail || `Local transcription failed (${response.status})`;
+    if (/tuple index out of range|invalid data found when processing input/i.test(String(message))) {
+      // Corrupted/partial container chunks happen in real-time recording. Skip this chunk.
+      return '';
+    }
     const err = new Error(message);
     err.status = response.status;
     throw err;

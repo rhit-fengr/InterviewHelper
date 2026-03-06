@@ -3,6 +3,7 @@ import { getTranscriptTail, normalizeRecognitionLanguages } from '../utils/inter
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 const CHUNK_MS = 2500;
+const MIN_CHUNK_BYTES = 2048;
 const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
 const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
@@ -10,7 +11,8 @@ const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
 function pickRecorderMimeType(provider = 'openai') {
   if (typeof MediaRecorder === 'undefined') return '';
   const normalizedProvider = String(provider || '').toLowerCase();
-  const candidates = normalizedProvider === 'gemini'
+  const preferOgg = normalizedProvider === 'gemini' || normalizedProvider === 'local';
+  const candidates = preferOgg
     ? [
       'audio/ogg;codecs=opus',
       'audio/ogg',
@@ -81,6 +83,8 @@ export function useDualAudioTranscript({
   const enabledRef = useRef(enabled);
   const uploadQueueRef = useRef(Promise.resolve());
   const localWhisperLeaseRef = useRef(false);
+  const recorderMimeTypeRef = useRef('audio/webm');
+  const serviceFailureCountRef = useRef(0);
 
   useEffect(() => {
     onChangeRef.current = onTranscriptChange;
@@ -133,7 +137,7 @@ export function useDualAudioTranscript({
   }, []);
 
   const transcribeChunk = useCallback(async (chunkBlob) => {
-    const mimeType = chunkBlob?.type || 'audio/webm';
+    const mimeType = chunkBlob?.type || recorderMimeTypeRef.current || 'audio/webm';
     const form = new FormData();
     form.append('audio', chunkBlob, `chunk-${Date.now()}.${inferExtensionFromMimeType(mimeType)}`);
     form.append('provider', provider);
@@ -159,6 +163,7 @@ export function useDualAudioTranscript({
       if (!segment) return;
       if (segment === lastSegmentRef.current) return;
       lastSegmentRef.current = segment;
+      serviceFailureCountRef.current = 0;
 
       const nextTranscript = appendTranscriptSegment(transcriptRef.current, segment);
       transcriptRef.current = nextTranscript;
@@ -172,6 +177,19 @@ export function useDualAudioTranscript({
       setError(null);
     } catch (err) {
       const message = err?.message || 'Transcription request failed.';
+      const lower = String(message).toLowerCase();
+      if (
+        lower.includes('cannot reach local transcription service') ||
+        lower.includes('service unavailable') ||
+        lower.includes('failed to fetch')
+      ) {
+        serviceFailureCountRef.current += 1;
+        if (serviceFailureCountRef.current >= 3) {
+          setError('Local transcription service is unavailable. In browser mode, run local-whisper-service/start_local_whisper.bat manually.');
+          stopCapture();
+          return;
+        }
+      }
       if (/rate limit/i.test(String(message))) {
         setError('Rate limit reached while transcribing audio. Wait a moment and try again.');
       } else if (/failed to fetch/i.test(String(message))) {
@@ -180,7 +198,7 @@ export function useDualAudioTranscript({
         setError(`${TRANSCRIBE_ERROR_PREFIX} ${message}`);
       }
     }
-  }, [primaryLanguage, provider, transcribeProvider]);
+  }, [primaryLanguage, provider, transcribeProvider, stopCapture]);
 
   useEffect(() => {
     if (!enabled) {
@@ -219,9 +237,10 @@ export function useDualAudioTranscript({
 
         const micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            // For dual-channel capture, processing can clip words and suppress quieter speech.
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
           },
           video: false,
         });
@@ -237,6 +256,7 @@ export function useDualAudioTranscript({
         if (systemAudioTracks.length === 0) {
           throw new Error('No system audio track was selected. Re-share with "Share audio" enabled.');
         }
+        systemAudioTracks.forEach((track) => { track.enabled = true; });
 
         if (cancelled || !enabledRef.current) {
           micStream.getTracks().forEach((track) => track.stop());
@@ -256,6 +276,7 @@ export function useDualAudioTranscript({
         }
         const context = new AudioContextCtor();
         contextRef.current = context;
+        await context.resume();
 
         const destination = context.createMediaStreamDestination();
         const micSource = context.createMediaStreamSource(micStream);
@@ -273,10 +294,12 @@ export function useDualAudioTranscript({
         const recorder = mimeType
           ? new MediaRecorder(mixedStream, { mimeType })
           : new MediaRecorder(mixedStream);
+        recorderMimeTypeRef.current = recorder.mimeType || mimeType || 'audio/webm';
 
         recorder.ondataavailable = (event) => {
           if (!enabledRef.current) return;
           if (!event?.data || event.data.size <= 0) return;
+          if (event.data.size < MIN_CHUNK_BYTES) return;
           uploadQueueRef.current = uploadQueueRef.current
             .then(() => transcribeChunk(event.data))
             .catch(() => {
@@ -290,7 +313,11 @@ export function useDualAudioTranscript({
 
         recorder.onstart = () => setIsListening(true);
         recorder.onstop = () => setIsListening(false);
-        const chunkMs = effectiveTranscribeProvider === 'gemini' ? 6000 : CHUNK_MS;
+        const chunkMs = effectiveTranscribeProvider === 'gemini'
+          ? 6000
+          : effectiveTranscribeProvider === 'local'
+            ? 4000
+            : CHUNK_MS;
         recorder.start(chunkMs);
         recorderRef.current = recorder;
 

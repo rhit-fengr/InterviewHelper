@@ -27,7 +27,8 @@ Windows one-click launcher:
 start_local_whisper.bat
 ```
 
-If bundled runtime exists (`runtime/venv/...`), this launcher uses bundled Python directly and does not install anything at runtime.
+If bundled runtime exists (`runtime/service/local-whisper-service/local-whisper-service.exe`), this launcher uses that executable directly and does not require system Python.
+If bundled Python venv exists (`runtime/venv/...`), it uses bundled Python directly.
 If bundled runtime does not exist, it falls back to system Python and installs dependencies on first run.
 
 ## 3. Server env wiring
@@ -47,10 +48,10 @@ Desktop `Interview Setup -> Transcription Provider`:
 Environment variables:
 
 - `WHISPER_MODEL` (default: `small`)
-- `WHISPER_DEVICE` (default: `auto`)
+- `WHISPER_DEVICE` (default: `cpu`)
 - `WHISPER_COMPUTE_TYPE` (default: `int8`)
 - `WHISPER_BEAM_SIZE` (default: `1`)
-- `WHISPER_VAD_FILTER` (default: `true`)
+- `WHISPER_VAD_FILTER` (default: `false`)
 - `LOCAL_WHISPER_PORT` (default: `8765`)
 
 `WHISPER_MODEL_PATH` can point to a local model directory (takes precedence over `WHISPER_MODEL`).
@@ -92,7 +93,7 @@ npm run prepare:local-whisper-runtime
 
 This creates:
 
-- `local-whisper-service/runtime/venv` (bundled Python env + dependencies)
+- `local-whisper-service/runtime/service/local-whisper-service/local-whisper-service.exe` (bundled runtime executable), or `runtime/venv` depending on build mode
 - `local-whisper-service/runtime/models/<model>`
 - `local-whisper-service/runtime/default_model.txt`
 

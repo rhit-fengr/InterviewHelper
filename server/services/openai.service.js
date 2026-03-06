@@ -29,14 +29,14 @@ const GEMINI_NATIVE_BASE_URL = (
   process.env.GEMINI_NATIVE_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
 ).replace(/\/+$/, '');
 const LOCAL_TRANSCRIBE_URL = String(process.env.LOCAL_TRANSCRIBE_URL || '').trim();
-const LOCAL_TRANSCRIBE_TIMEOUT_MS = Math.max(
-  5_000,
-  Number(process.env.LOCAL_TRANSCRIBE_TIMEOUT_MS || 120_000)
-);
-const LOCAL_TRANSCRIBE_RETRIES = Math.max(
-  0,
-  Number(process.env.LOCAL_TRANSCRIBE_RETRIES || 1)
-);
+const parsedLocalTranscribeTimeoutMs = Number(process.env.LOCAL_TRANSCRIBE_TIMEOUT_MS);
+const LOCAL_TRANSCRIBE_TIMEOUT_MS = Number.isFinite(parsedLocalTranscribeTimeoutMs)
+  ? Math.max(5_000, parsedLocalTranscribeTimeoutMs)
+  : 120_000;
+const parsedLocalTranscribeRetries = Number(process.env.LOCAL_TRANSCRIBE_RETRIES);
+const LOCAL_TRANSCRIBE_RETRIES = Number.isFinite(parsedLocalTranscribeRetries)
+  ? Math.max(0, parsedLocalTranscribeRetries)
+  : 1;
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -292,14 +292,20 @@ function resolveLocalWhisperLauncherPath() {
   return path.resolve(__dirname, '../../local-whisper-service/start_local_whisper.bat');
 }
 
+const HEALTH_CHECK_TIMEOUT_MS = 1500;
+
 async function isLocalWhisperHealthy() {
   const healthUrl = getLocalWhisperHealthUrl();
   if (!healthUrl) return false;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
   try {
-    const response = await fetch(healthUrl, { method: 'GET' });
+    const response = await fetch(healthUrl, { method: 'GET', signal: controller.signal });
     return response.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

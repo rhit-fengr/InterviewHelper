@@ -3,7 +3,7 @@ import { getTranscriptTail, normalizeRecognitionLanguages } from '../utils/inter
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 const CHUNK_MS = 2500;
-const MIN_CHUNK_BYTES = 2048;
+const MIN_CHUNK_BYTES = 100; // Filter only truly corrupt/empty blobs; any real audio frame exceeds this
 const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
 const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
@@ -178,11 +178,10 @@ export function useDualAudioTranscript({
     } catch (err) {
       const message = err?.message || 'Transcription request failed.';
       const lower = String(message).toLowerCase();
-      if (
-        lower.includes('cannot reach local transcription service') ||
-        lower.includes('service unavailable') ||
-        lower.includes('failed to fetch')
-      ) {
+      const isLocalOrAutoProvider = ['local', 'auto'].includes(
+        String(transcribeProvider || '').toLowerCase()
+      );
+      if (isLocalOrAutoProvider && lower.includes('cannot reach local transcription service')) {
         serviceFailureCountRef.current += 1;
         if (serviceFailureCountRef.current >= 3) {
           setError('Local transcription service is unavailable. In browser mode, run local-whisper-service/start_local_whisper.bat manually.');

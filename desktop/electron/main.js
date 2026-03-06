@@ -21,6 +21,7 @@ const LOCAL_WHISPER_START_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.LOCAL_WHISPER_START_TIMEOUT_MS || 90_000)
 );
+const HEALTH_CHECK_TIMEOUT_MS = 1500;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,11 +69,15 @@ function resolveLocalWhisperScriptPath() {
 }
 
 async function isLocalWhisperHealthy() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
   try {
-    const res = await fetch(LOCAL_WHISPER_HEALTH_URL, { method: 'GET' });
+    const res = await fetch(LOCAL_WHISPER_HEALTH_URL, { method: 'GET', signal: controller.signal });
     return res.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -110,15 +115,16 @@ function spawnLocalWhisperProcess() {
     };
   }
 
-  const command = `""${scriptPath}" --quiet"`;
+  const command = `"${scriptPath}" --quiet`;
   localWhisperRecentLogs = [];
   localWhisperLastExitCode = null;
-  const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
+  const child = spawn(command, {
     cwd: path.dirname(scriptPath),
     env: {
       ...process.env,
       LOCAL_WHISPER_PORT: getLocalWhisperPortFromHealthUrl(),
     },
+    shell: true,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -280,8 +286,8 @@ function createWindow() {
 app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      const preferredSource = sources.find((source) => source.name === 'Entire Screen') || sources[0];
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      const preferredSource = sources[0];
       if (!preferredSource) {
         callback({ video: null, audio: null });
         return;
@@ -295,7 +301,7 @@ app.whenReady().then(() => {
     } catch {
       callback({ video: null, audio: null });
     }
-  }, { useSystemPicker: true });
+  }, { useSystemPicker: false });
 
   createWindow();
 

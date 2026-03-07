@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getTranscriptTail,
   normalizeRecognitionLanguages,
@@ -8,13 +8,18 @@ import {
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 const DEFAULT_CHUNK_MS = 1800;
-const LOCAL_CHUNK_MS = 2200;
+const DEFAULT_SYSTEM_CHUNK_MS = 2400;
+const LOCAL_CHUNK_MS = 2800;
+const LOCAL_SYSTEM_CHUNK_MS = 4200;
 const GEMINI_CHUNK_MS = 3200;
-const MIN_CHUNK_BYTES = 100;
+const MIN_CHUNK_BYTES = 1024;
 const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
 const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
 const SOURCE_MODES = ['mic', 'system'];
+const CROSS_SOURCE_DEDUPE_WINDOW_MS = 12_000;
+const MIN_CROSS_SOURCE_DEDUPE_CHARS = 8;
+const MAX_RECENT_SEGMENTS_PER_SOURCE = 24;
 
 function pickRecorderMimeType(provider = 'openai') {
   if (typeof MediaRecorder === 'undefined') return '';
@@ -70,11 +75,39 @@ function normalizeEffectiveProvider(provider = 'auto', fallbackProvider = 'opena
   return value || 'openai';
 }
 
-function getChunkDurationMs(provider = 'openai') {
+function getChunkDurationMs(provider = 'openai', sourceMode = 'mic') {
   const normalized = normalizeEffectiveProvider(provider);
-  if (normalized === 'gemini') return GEMINI_CHUNK_MS;
-  if (normalized === 'local') return LOCAL_CHUNK_MS;
-  return DEFAULT_CHUNK_MS;
+  const source = String(sourceMode || '').trim().toLowerCase();
+  const isSystem = source === 'system';
+  if (normalized === 'gemini') return isSystem ? Math.max(GEMINI_CHUNK_MS, 4200) : GEMINI_CHUNK_MS;
+  if (normalized === 'local') return isSystem ? LOCAL_SYSTEM_CHUNK_MS : LOCAL_CHUNK_MS;
+  return isSystem ? DEFAULT_SYSTEM_CHUNK_MS : DEFAULT_CHUNK_MS;
+}
+
+function normalizeCompareText(text = '') {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\u4e00-\u9fa5]+/gu, '');
+}
+
+function isSemanticallySimilarSegment(left = '', right = '') {
+  const a = normalizeCompareText(left);
+  const b = normalizeCompareText(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  if (shorter.length < MIN_CROSS_SOURCE_DEDUPE_CHARS) return false;
+  if (!longer.includes(shorter)) return false;
+  return shorter.length / longer.length >= 0.72;
+}
+
+function pickLanguageHint(sourceMode, languages = [], fallbackLanguage = '') {
+  if (!fallbackLanguage) return '';
+  // For mixed language mode, keep system on auto-detect.
+  if (Array.isArray(languages) && languages.length > 1 && String(sourceMode || '').toLowerCase() === 'system') return '';
+  return fallbackLanguage;
 }
 
 export function useDualAudioTranscript({
@@ -85,7 +118,10 @@ export function useDualAudioTranscript({
   onTranscriptChange,
   onFinalSegment,
 } = {}) {
-  const languages = normalizeRecognitionLanguages(language);
+  const languageKey = Array.isArray(language)
+    ? language.map((item) => String(item || '').trim()).join('|')
+    : String(language || '').trim();
+  const languages = useMemo(() => normalizeRecognitionLanguages(language), [languageKey]);
   const primaryLanguage = languages[0];
 
   const [transcript, setTranscript] = useState('');
@@ -109,6 +145,7 @@ export function useDualAudioTranscript({
   const localWhisperLeaseRef = useRef(false);
   const recorderMimeTypeRef = useRef('audio/webm');
   const serviceFailureCountRef = useRef(0);
+  const recentSegmentsBySourceRef = useRef({ mic: [], system: [] });
 
   useEffect(() => {
     onChangeRef.current = onTranscriptChange;
@@ -169,6 +206,7 @@ export function useDualAudioTranscript({
     transcribeInFlightRef.current = false;
     pendingChunkBySourceRef.current = { mic: null, system: null };
     pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
+    recentSegmentsBySourceRef.current = { mic: [], system: [] };
 
     setIsListening(false);
   }, [clearSourceTimer]);
@@ -176,11 +214,14 @@ export function useDualAudioTranscript({
   const transcribeChunk = useCallback(async (chunkBlob, sourceMode) => {
     const normalizedSourceMode = String(sourceMode || '').trim().toLowerCase() || 'unknown';
     const mimeType = chunkBlob?.type || recorderMimeTypeRef.current || 'audio/webm';
+    const languageHint = pickLanguageHint(normalizedSourceMode, languages, primaryLanguage);
     const form = new FormData();
     form.append('audio', chunkBlob, `chunk-${Date.now()}.${inferExtensionFromMimeType(mimeType)}`);
     form.append('provider', provider);
     form.append('transcribeProvider', transcribeProvider || 'auto');
-    form.append('language', primaryLanguage);
+    if (languageHint) {
+      form.append('language', languageHint);
+    }
     form.append('sourceMode', normalizedSourceMode);
 
     try {
@@ -203,7 +244,25 @@ export function useDualAudioTranscript({
       const cleanedSegment = sanitizeTranscriptSegment(String(body?.text || ''));
       if (!cleanedSegment) return;
       if (cleanedSegment === lastSegmentsBySourceRef.current[sourceFromServer]) return;
+
+      if (sourceFromServer === 'mic') {
+        const now = Date.now();
+        const recentSystem = recentSegmentsBySourceRef.current.system || [];
+        const hasSystemDuplicate = recentSystem.some((entry) => (
+          now - entry.at <= CROSS_SOURCE_DEDUPE_WINDOW_MS
+          && isSemanticallySimilarSegment(cleanedSegment, entry.text)
+        ));
+        if (hasSystemDuplicate) {
+          return;
+        }
+      }
+
       lastSegmentsBySourceRef.current[sourceFromServer] = cleanedSegment;
+      if (SOURCE_MODES.includes(sourceFromServer)) {
+        const sourceRecent = recentSegmentsBySourceRef.current[sourceFromServer] || [];
+        sourceRecent.push({ text: cleanedSegment, at: Date.now() });
+        recentSegmentsBySourceRef.current[sourceFromServer] = sourceRecent.slice(-MAX_RECENT_SEGMENTS_PER_SOURCE);
+      }
       serviceFailureCountRef.current = 0;
 
       const nextTranscript = appendTranscriptSegment(transcriptRef.current, cleanedSegment);
@@ -239,7 +298,7 @@ export function useDualAudioTranscript({
         setError(`${TRANSCRIBE_ERROR_PREFIX} ${message}`);
       }
     }
-  }, [primaryLanguage, provider, transcribeProvider, stopCapture]);
+  }, [languages, primaryLanguage, provider, transcribeProvider, stopCapture]);
 
   const pickNextSourceToTranscribe = useCallback(() => {
     const pending = pendingChunkBySourceRef.current;
@@ -326,9 +385,10 @@ export function useDualAudioTranscript({
 
         const micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
+            // Suppress desktop playback leakage into the mic channel in dual-source mode.
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
           },
           video: false,
         });
@@ -360,10 +420,10 @@ export function useDualAudioTranscript({
         pendingChunkBySourceRef.current = { mic: null, system: null };
         pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
         lastSegmentsBySourceRef.current = { mic: '', system: '' };
+        recentSegmentsBySourceRef.current = { mic: [], system: [] };
 
         const recorderProvider = normalizeEffectiveProvider(transcribeProvider, provider);
         const mimeType = pickRecorderMimeType(recorderProvider);
-        const chunkMs = getChunkDurationMs(recorderProvider);
 
         const createRecorder = (sourceMode, sourceStream) => {
           if (!sourceStream?.getAudioTracks || sourceStream.getAudioTracks().length === 0) {
@@ -378,6 +438,7 @@ export function useDualAudioTranscript({
 
           const scheduleRotate = () => {
             clearSourceTimer(sourceMode);
+            const chunkMs = getChunkDurationMs(recorderProvider, sourceMode);
             recorderRotateTimersRef.current[sourceMode] = setTimeout(() => {
               if (!enabledRef.current || cancelled) return;
               if (recorder.state !== 'recording') return;

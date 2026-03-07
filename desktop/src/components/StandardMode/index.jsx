@@ -17,6 +17,39 @@ import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnsw
 import './StandardMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
+const MERGE_WINDOW_MS = 4_500;
+const SHORT_FRAGMENT_MAX_CHARS = 8;
+
+function joinTranscriptText(previousText = '', currentText = '') {
+  const left = String(previousText || '').trim();
+  const right = String(currentText || '').trim();
+  if (!left) return right;
+  if (!right) return left;
+  if (/[，。！？!?.,:]$/.test(left)) return `${left} ${right}`.trim();
+  return `${left} ${right}`.trim();
+}
+
+function shouldMergeTranscriptEntries(previousEntry, nextEntry) {
+  if (!previousEntry || !nextEntry) return false;
+  if ((previousEntry.sourceMode || 'unknown') !== (nextEntry.sourceMode || 'unknown')) return false;
+  if ((previousEntry.language || '') !== (nextEntry.language || '')) return false;
+  if ((previousEntry.speaker || '') !== (nextEntry.speaker || '')) return false;
+
+  const previousTs = Number(previousEntry.timestamp) || 0;
+  const nextTs = Number(nextEntry.timestamp) || 0;
+  if (!previousTs || !nextTs) return false;
+  if (nextTs - previousTs > MERGE_WINDOW_MS) return false;
+
+  const prevText = String(previousEntry.text || '').trim();
+  const nextText = String(nextEntry.text || '').trim();
+  if (!prevText || !nextText) return false;
+
+  if (prevText.length <= SHORT_FRAGMENT_MAX_CHARS || nextText.length <= SHORT_FRAGMENT_MAX_CHARS) {
+    return true;
+  }
+
+  return prevText.length + nextText.length <= 56;
+}
 
 export default function StandardMode({ onBack }) {
   const { setup, session, personalInfo, answerSettings, displaySettings } = useInterviewStore();
@@ -132,16 +165,27 @@ export default function StandardMode({ onBack }) {
     const speaker = providedSpeaker || (
       sourceSpeaker !== 'Unknown' ? sourceSpeaker : guessSpeakerLabel(cleanedText)
     );
-    setTranscriptEntries((prev) => ([
-      ...prev,
-      {
+    setTranscriptEntries((prev) => {
+      const nextEntry = {
         text: cleanedText,
         language: segmentLanguage,
         speaker,
-        timestamp,
+        timestamp: timestamp || Date.now(),
         sourceMode: sourceMode || 'unknown',
-      },
-    ].slice(-500)));
+      };
+      if (prev.length > 0) {
+        const previousEntry = prev[prev.length - 1];
+        if (shouldMergeTranscriptEntries(previousEntry, nextEntry)) {
+          const mergedEntry = {
+            ...previousEntry,
+            text: joinTranscriptText(previousEntry.text, nextEntry.text),
+            timestamp: nextEntry.timestamp,
+          };
+          return [...prev.slice(0, -1), mergedEntry].slice(-500);
+        }
+      }
+      return [...prev, nextEntry].slice(-500);
+    });
   }, []);
 
   const webSpeechTranscript = useTranscript({

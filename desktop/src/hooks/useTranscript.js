@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { normalizeRecognitionLanguages } from '../utils/interviewTranscript';
+import {
+  normalizeRecognitionLanguages,
+  sanitizeTranscriptSegment,
+  speakerFromSourceMode,
+} from '../utils/interviewTranscript';
 
 /**
  * useTranscript — live speech-to-text via Web Speech API.
@@ -190,18 +194,20 @@ export function useTranscript({
         sessionInterim += text;
       }
 
-      if (finalDelta) {
-        sessionFinalRef.current += finalDelta;
-        lastFinalAtRef.current = Date.now();
-        const cleaned = finalDelta.trim();
-        if (cleaned) {
-          onFinalSegmentRef.current?.({
-            text: cleaned,
-            language: activeLanguageRef.current,
-            timestamp: Date.now(),
-          });
+        if (finalDelta) {
+          sessionFinalRef.current += finalDelta;
+          lastFinalAtRef.current = Date.now();
+          const cleaned = sanitizeTranscriptSegment(finalDelta);
+          if (cleaned) {
+            onFinalSegmentRef.current?.({
+              text: cleaned,
+              language: activeLanguageRef.current,
+              timestamp: Date.now(),
+              sourceMode: 'mic',
+              speaker: speakerFromSourceMode('mic'),
+            });
+          }
         }
-      }
 
       const current = committedRef.current + sessionFinalRef.current + sessionInterim;
       if (current === lastTranscriptRef.current) return;

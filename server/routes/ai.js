@@ -218,7 +218,7 @@ router.post('/detect-question', async (req, res) => {
  *  - provider?: openai|gemini
  *  - transcribeProvider?: auto|openai|local|gemini
  *  - language?: BCP-47 hint
- *  - sourceMode?: mic|mic-system
+ *  - sourceMode?: mic|system|mic-system
  */
 router.post('/transcribe-chunk', (req, res, next) => {
   transcribeUpload.single('audio')(req, res, (err) => {

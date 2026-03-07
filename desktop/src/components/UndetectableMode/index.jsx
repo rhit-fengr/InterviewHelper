@@ -137,7 +137,7 @@ export default function UndetectableMode({ onBack }) {
       clearTimeout(detectionTimeoutRef.current);
       detectionTimeoutRef.current = setTimeout(() => {
         runQuestionDetection(getTranscriptTail(text, 1200));
-      }, 1500);
+      }, 900);
     }
   }, [clientConnected, sessionCode, streamTranscript, runQuestionDetection]);
 

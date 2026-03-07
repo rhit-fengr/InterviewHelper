@@ -168,7 +168,7 @@
 .transcript-entry {
   display: grid;
   gap: 6px;
-  grid-template-columns: auto auto 1fr;
+  grid-template-columns: auto auto auto 1fr;
   align-items: center;
 }
 
@@ -199,6 +199,12 @@
 .entry-language-tag {
   color: #a78bfa;
   font-size: 11px;
+}
+
+.entry-source-tag {
+  color: #38bdf8;
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .entry-text {

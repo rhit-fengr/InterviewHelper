@@ -10,6 +10,8 @@ import {
   extractManualQuestionFromTranscript,
   getTranscriptTail,
   guessSpeakerLabel,
+  sanitizeTranscriptSegment,
+  speakerFromSourceMode,
 } from '../../utils/interviewTranscript';
 import { normalizeQuestionKey, shouldSkipAutoAnswer } from '../../utils/autoAnswer';
 import './StandardMode.css';
@@ -105,10 +107,10 @@ export default function StandardMode({ onBack }) {
   const handleTranscriptUpdate = useCallback((text) => {
     if (!sessionRef.current.autoAnswer) return;
     clearTimeout(detectionTimeoutRef.current);
-    // Debounce question detection — wait 1.5s of silence before checking
+    // Debounce question detection — wait a short silence window before checking
     detectionTimeoutRef.current = setTimeout(() => {
       runQuestionDetection(getTranscriptTail(text, 1200));
-    }, 1500);
+    }, 900);
   }, [runQuestionDetection]);
 
   // Support array of interview languages (use first for recognition)
@@ -117,15 +119,27 @@ export default function StandardMode({ onBack }) {
     : [setup.interviewLang || 'en-US'];
   const audioInputMode = session.audioInputMode || 'mic';
 
-  const handleFinalSegment = useCallback(({ text, language: segmentLanguage, timestamp }) => {
-    const speaker = guessSpeakerLabel(text);
+  const handleFinalSegment = useCallback(({
+    text,
+    language: segmentLanguage,
+    timestamp,
+    sourceMode,
+    speaker: providedSpeaker,
+  }) => {
+    const cleanedText = sanitizeTranscriptSegment(text);
+    if (!cleanedText) return;
+    const sourceSpeaker = speakerFromSourceMode(sourceMode);
+    const speaker = providedSpeaker || (
+      sourceSpeaker !== 'Unknown' ? sourceSpeaker : guessSpeakerLabel(cleanedText)
+    );
     setTranscriptEntries((prev) => ([
       ...prev,
       {
-        text,
+        text: cleanedText,
         language: segmentLanguage,
         speaker,
         timestamp,
+        sourceMode: sourceMode || 'unknown',
       },
     ].slice(-500)));
   }, []);
@@ -324,6 +338,11 @@ export default function StandardMode({ onBack }) {
                       {entry.speaker}
                     </span>
                     <span className="entry-language-tag">{entry.language}</span>
+                    {entry.sourceMode && (
+                      <span className="entry-source-tag">
+                        {entry.sourceMode === 'system' ? 'System' : entry.sourceMode === 'mic' ? 'Mic' : entry.sourceMode}
+                      </span>
+                    )}
                     <span className="entry-text">{entry.text}</span>
                   </div>
                 ))}

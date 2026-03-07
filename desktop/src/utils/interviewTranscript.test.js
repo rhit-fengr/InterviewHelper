@@ -5,6 +5,8 @@ import {
   buildSessionExportText,
   guessSpeakerLabel,
   normalizeRecognitionLanguages,
+  sanitizeTranscriptSegment,
+  speakerFromSourceMode,
 } from './interviewTranscript';
 
 describe('extractManualQuestionFromTranscript', () => {
@@ -103,5 +105,28 @@ describe('normalizeRecognitionLanguages', () => {
 
   it('falls back to en-US when no valid values', () => {
     expect(normalizeRecognitionLanguages(['', '   '])).toEqual(['en-US']);
+  });
+});
+
+describe('sanitizeTranscriptSegment', () => {
+  it('removes subtitle watermark snippets', () => {
+    expect(sanitizeTranscriptSegment('字幕by索兰娅 你好')).toBe('你好');
+    expect(sanitizeTranscriptSegment('字幕制作人Zither Harp 你好')).toBe('你好');
+    expect(sanitizeTranscriptSegment('captions by someone hello')).toBe('hello');
+  });
+
+  it('returns empty when text is only a watermark', () => {
+    expect(sanitizeTranscriptSegment('字幕 by 索兰娅')).toBe('');
+  });
+});
+
+describe('speakerFromSourceMode', () => {
+  it('maps system to interviewer and mic to candidate', () => {
+    expect(speakerFromSourceMode('system')).toBe('Interviewer');
+    expect(speakerFromSourceMode('mic')).toBe('Candidate');
+  });
+
+  it('returns unknown for unsupported modes', () => {
+    expect(speakerFromSourceMode('mic-system')).toBe('Unknown');
   });
 });

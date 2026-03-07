@@ -23,6 +23,36 @@ export function getTranscriptTail(transcript = '', maxChars = 1200) {
   return text.length <= limit ? text : text.slice(-limit).trim();
 }
 
+const TRANSCRIPT_NOISE_PATTERNS = [
+  /字幕\s*by\s*[A-Za-z0-9_.\-\u4e00-\u9fa5]{1,24}(?:\s+[A-Za-z][A-Za-z0-9_.\-]{0,23})?/gi,
+  /字幕制作人(?:\s*[：:])?\s*[A-Za-z0-9_.\-\u4e00-\u9fa5]{1,24}(?:\s+[A-Za-z][A-Za-z0-9_.\-]{0,23})?/gi,
+  /字幕製作人(?:\s*[：:])?\s*[A-Za-z0-9_.\-\u4e00-\u9fa5]{1,24}(?:\s+[A-Za-z][A-Za-z0-9_.\-]{0,23})?/gi,
+  /caption(?:s)?\s*by\s*[A-Za-z0-9_.\-]{1,24}/gi,
+  /字幕由[^\s,，。.!?？]{1,24}(?:提供|制作|製作)?/gi,
+];
+
+export function sanitizeTranscriptSegment(text = '') {
+  let cleaned = String(text || '').trim();
+  if (!cleaned) return '';
+
+  for (const pattern of TRANSCRIPT_NOISE_PATTERNS) {
+    cleaned = cleaned.replace(pattern, ' ');
+  }
+
+  cleaned = cleaned
+    .replace(/^[\s:：\-|,.，。]+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+
+  // Guard against standalone watermark-like leftovers.
+  if (/^(字幕|captions?)(?:\s|$)/i.test(cleaned) && cleaned.length <= 24) {
+    return '';
+  }
+
+  return cleaned;
+}
+
 export function buildManualQuestionFromEntries(entries = [], {
   maxEntries = 3,
   maxChars = 500,
@@ -53,6 +83,13 @@ export function guessSpeakerLabel(text = '') {
   }
 
   return 'Candidate';
+}
+
+export function speakerFromSourceMode(sourceMode = '') {
+  const normalized = String(sourceMode || '').trim().toLowerCase();
+  if (normalized === 'system') return 'Interviewer';
+  if (normalized === 'mic') return 'Candidate';
+  return 'Unknown';
 }
 
 export function normalizeRecognitionLanguages(language = 'en-US') {

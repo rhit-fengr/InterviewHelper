@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getTranscriptTail, normalizeRecognitionLanguages } from '../utils/interviewTranscript';
+import {
+  getTranscriptTail,
+  normalizeRecognitionLanguages,
+  sanitizeTranscriptSegment,
+  speakerFromSourceMode,
+} from '../utils/interviewTranscript';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
-const CHUNK_MS = 2500;
-const MIN_CHUNK_BYTES = 100; // Filter only truly corrupt/empty blobs; any real audio frame exceeds this
+const DEFAULT_CHUNK_MS = 1800;
+const LOCAL_CHUNK_MS = 2200;
+const GEMINI_CHUNK_MS = 3200;
+const MIN_CHUNK_BYTES = 100;
 const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
 const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
+const SOURCE_MODES = ['mic', 'system'];
 
 function pickRecorderMimeType(provider = 'openai') {
   if (typeof MediaRecorder === 'undefined') return '';
@@ -56,6 +64,19 @@ function appendTranscriptSegment(previous, segment) {
   return getTranscriptTail(merged, MAX_TRANSCRIPT_CHARS);
 }
 
+function normalizeEffectiveProvider(provider = 'auto', fallbackProvider = 'openai') {
+  const value = String(provider || '').trim().toLowerCase();
+  if (value === 'auto') return String(fallbackProvider || 'openai').trim().toLowerCase();
+  return value || 'openai';
+}
+
+function getChunkDurationMs(provider = 'openai') {
+  const normalized = normalizeEffectiveProvider(provider);
+  if (normalized === 'gemini') return GEMINI_CHUNK_MS;
+  if (normalized === 'local') return LOCAL_CHUNK_MS;
+  return DEFAULT_CHUNK_MS;
+}
+
 export function useDualAudioTranscript({
   enabled = false,
   language = 'en-US',
@@ -72,16 +93,19 @@ export function useDualAudioTranscript({
   const [error, setError] = useState(null);
   const [activeLanguage, setActiveLanguage] = useState(primaryLanguage);
 
-  const recorderRef = useRef(null);
-  const contextRef = useRef(null);
+  const recordersRef = useRef({ mic: null, system: null });
+  const recorderRotateTimersRef = useRef({ mic: null, system: null });
+  const recorderRestartPendingRef = useRef({ mic: false, system: false });
   const micStreamRef = useRef(null);
   const systemStreamRef = useRef(null);
   const transcriptRef = useRef('');
-  const lastSegmentRef = useRef('');
+  const lastSegmentsBySourceRef = useRef({ mic: '', system: '' });
   const onChangeRef = useRef(onTranscriptChange);
   const onFinalSegmentRef = useRef(onFinalSegment);
   const enabledRef = useRef(enabled);
-  const uploadQueueRef = useRef(Promise.resolve());
+  const transcribeInFlightRef = useRef(false);
+  const pendingChunkBySourceRef = useRef({ mic: null, system: null });
+  const pendingUpdatedAtBySourceRef = useRef({ mic: 0, system: 0 });
   const localWhisperLeaseRef = useRef(false);
   const recorderMimeTypeRef = useRef('audio/webm');
   const serviceFailureCountRef = useRef(0);
@@ -102,20 +126,29 @@ export function useDualAudioTranscript({
     setActiveLanguage(primaryLanguage);
   }, [primaryLanguage]);
 
-  const stopCapture = useCallback(() => {
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      try {
-        recorderRef.current.stop();
-      } catch {
-        // ignore stop errors
-      }
+  const clearSourceTimer = useCallback((sourceMode) => {
+    const timer = recorderRotateTimersRef.current[sourceMode];
+    if (timer) {
+      clearTimeout(timer);
+      recorderRotateTimersRef.current[sourceMode] = null;
     }
-    recorderRef.current = null;
+    recorderRestartPendingRef.current[sourceMode] = false;
+  }, []);
 
-    if (contextRef.current) {
-      contextRef.current.close().catch(() => {});
-      contextRef.current = null;
-    }
+  const stopCapture = useCallback(() => {
+    SOURCE_MODES.forEach((sourceMode) => clearSourceTimer(sourceMode));
+
+    SOURCE_MODES.forEach((sourceMode) => {
+      const recorder = recordersRef.current[sourceMode];
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch {
+          // ignore stop errors
+        }
+      }
+      recordersRef.current[sourceMode] = null;
+    });
 
     if (micStreamRef.current) {
       micStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -133,17 +166,22 @@ export function useDualAudioTranscript({
       });
     }
 
-    setIsListening(false);
-  }, []);
+    transcribeInFlightRef.current = false;
+    pendingChunkBySourceRef.current = { mic: null, system: null };
+    pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
 
-  const transcribeChunk = useCallback(async (chunkBlob) => {
+    setIsListening(false);
+  }, [clearSourceTimer]);
+
+  const transcribeChunk = useCallback(async (chunkBlob, sourceMode) => {
+    const normalizedSourceMode = String(sourceMode || '').trim().toLowerCase() || 'unknown';
     const mimeType = chunkBlob?.type || recorderMimeTypeRef.current || 'audio/webm';
     const form = new FormData();
     form.append('audio', chunkBlob, `chunk-${Date.now()}.${inferExtensionFromMimeType(mimeType)}`);
     form.append('provider', provider);
     form.append('transcribeProvider', transcribeProvider || 'auto');
     form.append('language', primaryLanguage);
-    form.append('sourceMode', 'mic-system');
+    form.append('sourceMode', normalizedSourceMode);
 
     try {
       const response = await fetch(`${SERVER_URL}/api/ai/transcribe-chunk`, {
@@ -159,29 +197,33 @@ export function useDualAudioTranscript({
       }
       if (!enabledRef.current) return;
 
-      const segment = String(body?.text || '').trim();
-      if (!segment) return;
-      if (segment === lastSegmentRef.current) return;
-      lastSegmentRef.current = segment;
+      const sourceFromServer = String(body?.sourceMode || normalizedSourceMode || 'unknown')
+        .trim()
+        .toLowerCase();
+      const cleanedSegment = sanitizeTranscriptSegment(String(body?.text || ''));
+      if (!cleanedSegment) return;
+      if (cleanedSegment === lastSegmentsBySourceRef.current[sourceFromServer]) return;
+      lastSegmentsBySourceRef.current[sourceFromServer] = cleanedSegment;
       serviceFailureCountRef.current = 0;
 
-      const nextTranscript = appendTranscriptSegment(transcriptRef.current, segment);
+      const nextTranscript = appendTranscriptSegment(transcriptRef.current, cleanedSegment);
       transcriptRef.current = nextTranscript;
       setTranscript(nextTranscript);
       onChangeRef.current?.(nextTranscript);
       onFinalSegmentRef.current?.({
-        text: segment,
+        text: cleanedSegment,
         language: primaryLanguage,
         timestamp: Date.now(),
+        sourceMode: sourceFromServer,
+        speaker: speakerFromSourceMode(sourceFromServer),
       });
       setError(null);
     } catch (err) {
       const message = err?.message || 'Transcription request failed.';
       const lower = String(message).toLowerCase();
-      const isLocalOrAutoProvider = ['local', 'auto'].includes(
-        String(transcribeProvider || '').toLowerCase()
-      );
-      if (isLocalOrAutoProvider && lower.includes('cannot reach local transcription service')) {
+      const selectedProvider = String(transcribeProvider || '').toLowerCase();
+      const isLocalOnlyMode = selectedProvider === 'local';
+      if (isLocalOnlyMode && lower.includes('cannot reach local transcription service')) {
         serviceFailureCountRef.current += 1;
         if (serviceFailureCountRef.current >= 3) {
           setError('Local transcription service is unavailable. In browser mode, run local-whisper-service/start_local_whisper.bat manually.');
@@ -198,6 +240,54 @@ export function useDualAudioTranscript({
       }
     }
   }, [primaryLanguage, provider, transcribeProvider, stopCapture]);
+
+  const pickNextSourceToTranscribe = useCallback(() => {
+    const pending = pendingChunkBySourceRef.current;
+    const hasMic = Boolean(pending.mic);
+    const hasSystem = Boolean(pending.system);
+    if (!hasMic && !hasSystem) return null;
+    if (hasMic && !hasSystem) return 'mic';
+    if (!hasMic && hasSystem) return 'system';
+
+    const micUpdatedAt = pendingUpdatedAtBySourceRef.current.mic || 0;
+    const systemUpdatedAt = pendingUpdatedAtBySourceRef.current.system || 0;
+    return micUpdatedAt <= systemUpdatedAt ? 'mic' : 'system';
+  }, []);
+
+  const drainPendingChunks = useCallback(() => {
+    if (!enabledRef.current || transcribeInFlightRef.current) return;
+
+    const source = pickNextSourceToTranscribe();
+    if (!source) return;
+
+    const nextChunk = pendingChunkBySourceRef.current[source];
+    pendingChunkBySourceRef.current[source] = null;
+    pendingUpdatedAtBySourceRef.current[source] = 0;
+    if (!nextChunk) return;
+
+    transcribeInFlightRef.current = true;
+    transcribeChunk(nextChunk, source)
+      .catch(() => {
+        // Errors are surfaced in transcribeChunk.
+      })
+      .finally(() => {
+        transcribeInFlightRef.current = false;
+        if (enabledRef.current) {
+          drainPendingChunks();
+        }
+      });
+  }, [pickNextSourceToTranscribe, transcribeChunk]);
+
+  const enqueueChunk = useCallback((chunkBlob, sourceMode) => {
+    if (!enabledRef.current) return;
+    const source = String(sourceMode || '').trim().toLowerCase();
+    if (!SOURCE_MODES.includes(source)) return;
+
+    // Keep only the latest chunk per source to cap latency/memory.
+    pendingChunkBySourceRef.current[source] = chunkBlob;
+    pendingUpdatedAtBySourceRef.current[source] = Date.now();
+    drainPendingChunks();
+  }, [drainPendingChunks]);
 
   useEffect(() => {
     if (!enabled) {
@@ -236,7 +326,6 @@ export function useDualAudioTranscript({
 
         const micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            // For dual-channel capture, processing can clip words and suppress quieter speech.
             echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false,
@@ -267,64 +356,108 @@ export function useDualAudioTranscript({
         systemStreamRef.current = systemStream;
         startupMicStream = null;
         startupSystemStream = null;
-        uploadQueueRef.current = Promise.resolve();
+        transcribeInFlightRef.current = false;
+        pendingChunkBySourceRef.current = { mic: null, system: null };
+        pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
+        lastSegmentsBySourceRef.current = { mic: '', system: '' };
 
-        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContextCtor) {
-          throw new Error('AudioContext is not supported in this environment.');
+        const recorderProvider = normalizeEffectiveProvider(transcribeProvider, provider);
+        const mimeType = pickRecorderMimeType(recorderProvider);
+        const chunkMs = getChunkDurationMs(recorderProvider);
+
+        const createRecorder = (sourceMode, sourceStream) => {
+          if (!sourceStream?.getAudioTracks || sourceStream.getAudioTracks().length === 0) {
+            return null;
+          }
+
+          const audioOnlyStream = new MediaStream(sourceStream.getAudioTracks());
+          const recorder = mimeType
+            ? new MediaRecorder(audioOnlyStream, { mimeType })
+            : new MediaRecorder(audioOnlyStream);
+          recorderMimeTypeRef.current = recorder.mimeType || mimeType || recorderMimeTypeRef.current;
+
+          const scheduleRotate = () => {
+            clearSourceTimer(sourceMode);
+            recorderRotateTimersRef.current[sourceMode] = setTimeout(() => {
+              if (!enabledRef.current || cancelled) return;
+              if (recorder.state !== 'recording') return;
+              recorderRestartPendingRef.current[sourceMode] = true;
+              try {
+                recorder.stop();
+              } catch {
+                recorderRestartPendingRef.current[sourceMode] = false;
+              }
+            }, chunkMs);
+          };
+
+          const startSegment = () => {
+            if (!enabledRef.current || cancelled) return;
+            if (recorder.state !== 'inactive') return;
+            try {
+              recorder.start();
+              scheduleRotate();
+            } catch {
+              setError(`Audio recorder failed to start for ${sourceMode}. Stop and start listening again.`);
+            }
+          };
+
+          recorder.ondataavailable = (event) => {
+            if (!enabledRef.current) return;
+            if (!event?.data || event.data.size <= 0) return;
+            if (event.data.size < MIN_CHUNK_BYTES) return;
+            enqueueChunk(event.data, sourceMode);
+          };
+
+          recorder.onerror = () => {
+            setError(`Audio recorder (${sourceMode}) failed. Stop and start listening again.`);
+          };
+
+          recorder.onstart = () => {
+            setIsListening(true);
+          };
+
+          recorder.onstop = () => {
+            const shouldRestart = recorderRestartPendingRef.current[sourceMode]
+              && enabledRef.current
+              && !cancelled;
+            recorderRestartPendingRef.current[sourceMode] = false;
+            if (shouldRestart) {
+              const replacement = createRecorder(sourceMode, sourceStream);
+              recordersRef.current[sourceMode] = replacement;
+              return;
+            }
+            if (!enabledRef.current) {
+              setIsListening(false);
+            }
+          };
+
+          startSegment();
+          return recorder;
+        };
+
+        const micRecorder = createRecorder('mic', micStream);
+        const systemRecorder = createRecorder('system', new MediaStream(systemAudioTracks));
+        if (!micRecorder && !systemRecorder) {
+          throw new Error('No audio tracks available for recording.');
         }
-        const context = new AudioContextCtor();
-        contextRef.current = context;
-        await context.resume();
 
-        const destination = context.createMediaStreamDestination();
-        const micSource = context.createMediaStreamSource(micStream);
-        const systemSource = context.createMediaStreamSource(
-          new MediaStream(systemAudioTracks)
-        );
-        micSource.connect(destination);
-        systemSource.connect(destination);
-
-        const mixedStream = destination.stream;
-        const effectiveTranscribeProvider = String(transcribeProvider || provider || 'auto').toLowerCase();
-        const mimeType = pickRecorderMimeType(
-          effectiveTranscribeProvider === 'auto' ? provider : effectiveTranscribeProvider
-        );
-        const recorder = mimeType
-          ? new MediaRecorder(mixedStream, { mimeType })
-          : new MediaRecorder(mixedStream);
-        recorderMimeTypeRef.current = recorder.mimeType || mimeType || 'audio/webm';
-
-        recorder.ondataavailable = (event) => {
-          if (!enabledRef.current) return;
-          if (!event?.data || event.data.size <= 0) return;
-          if (event.data.size < MIN_CHUNK_BYTES) return;
-          uploadQueueRef.current = uploadQueueRef.current
-            .then(() => transcribeChunk(event.data))
-            .catch(() => {
-              // Queue errors are already surfaced in transcribeChunk.
-            });
-        };
-
-        recorder.onerror = () => {
-          setError('Audio recorder failed. Stop and start listening again.');
-        };
-
-        recorder.onstart = () => setIsListening(true);
-        recorder.onstop = () => setIsListening(false);
-        const chunkMs = effectiveTranscribeProvider === 'gemini'
-          ? 6000
-          : effectiveTranscribeProvider === 'local'
-            ? 4000
-            : CHUNK_MS;
-        recorder.start(chunkMs);
-        recorderRef.current = recorder;
+        recordersRef.current.mic = micRecorder;
+        recordersRef.current.system = systemRecorder;
 
         for (const track of systemStream.getVideoTracks()) {
           track.onended = () => {
             if (enabledRef.current) {
-              setError('System audio share ended. Click Start Listening and share audio again.');
-              stopCapture();
+              setError('System audio share ended. Re-share screen audio to continue interviewer transcription.');
+              clearSourceTimer('system');
+              const recorder = recordersRef.current.system;
+              if (recorder && recorder.state !== 'inactive') {
+                try {
+                  recorder.stop();
+                } catch {
+                  // ignore stop errors
+                }
+              }
+              recordersRef.current.system = null;
             }
           };
         }
@@ -347,11 +480,11 @@ export function useDualAudioTranscript({
       cancelled = true;
       stopCapture();
     };
-  }, [enabled, primaryLanguage, provider, transcribeProvider, stopCapture, transcribeChunk]);
+  }, [enabled, primaryLanguage, provider, transcribeProvider, clearSourceTimer, stopCapture, transcribeChunk, enqueueChunk]);
 
   const clearTranscript = () => {
     transcriptRef.current = '';
-    lastSegmentRef.current = '';
+    lastSegmentsBySourceRef.current = { mic: '', system: '' };
     setTranscript('');
   };
 

@@ -250,7 +250,7 @@ export default function StandardMode({ onBack }) {
     : webSpeechTranscript.activeLanguage;
   const normalizedSttProvider = String(setup.sttProvider || 'auto').trim().toLowerCase();
   const systemSttLabel = normalizedSttProvider === 'auto'
-    ? 'openai -> local -> gemini -> windows-live-captions'
+    ? 'windows-live-captions -> local -> openai -> gemini'
     : normalizedSttProvider;
   const sttDisplayLabel = audioInputMode === 'mic-system'
     ? `Mic=webspeech | System=${systemSttLabel}`

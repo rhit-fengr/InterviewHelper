@@ -24,7 +24,8 @@ import uvicorn
 
 
 APP_NAME = "Interview AI Hamburger Local Whisper Service"
-MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
+# "base" provides a better default latency/quality tradeoff for CPU real-time usage.
+MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
 MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", "").strip()
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
@@ -45,9 +46,17 @@ TEMPERATURES = tuple(
     for item in RAW_TEMPERATURES.split(",")
     if item.strip()
 )
+PRELOAD_MODEL = os.getenv("WHISPER_PRELOAD_MODEL", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 app = FastAPI(title=APP_NAME, version="1.0.0")
 _model: Optional[WhisperModel] = None
+_model_ready = False
+_model_error = ""
 LOGGER = logging.getLogger("local-whisper")
 
 
@@ -88,7 +97,7 @@ def _normalize_language_hint(language: str) -> Optional[str]:
 
 
 def _get_model() -> WhisperModel:
-    global _model
+    global _model, _model_ready, _model_error
     if _model is None:
         model_source = MODEL_PATH if MODEL_PATH else MODEL_NAME
         try:
@@ -97,6 +106,8 @@ def _get_model() -> WhisperModel:
                 device=DEVICE,
                 compute_type=COMPUTE_TYPE,
             )
+            _model_ready = True
+            _model_error = ""
         except Exception as exc:
             if DEVICE.lower() != "cpu" and _is_cuda_runtime_error(exc):
                 LOGGER.warning("CUDA runtime unavailable, falling back to CPU: %s", exc)
@@ -105,9 +116,28 @@ def _get_model() -> WhisperModel:
                     device="cpu",
                     compute_type="int8",
                 )
+                _model_ready = True
+                _model_error = ""
             else:
+                _model_error = str(exc)
                 raise
     return _model
+
+
+@app.on_event("startup")
+def preload_model_on_startup() -> None:
+    global _model_ready, _model_error
+    if not PRELOAD_MODEL:
+        return
+    try:
+        _get_model()
+        _model_ready = True
+        _model_error = ""
+        LOGGER.info("Local Whisper model preloaded: %s", MODEL_PATH or MODEL_NAME)
+    except Exception as exc:  # pragma: no cover
+        _model_ready = False
+        _model_error = str(exc)
+        LOGGER.exception("Local Whisper model preload failed")
 
 
 def _transcribe_once(model: WhisperModel, tmp_path: str, language: Optional[str], vad_filter: bool) -> str:
@@ -152,6 +182,9 @@ def health() -> JSONResponse:
             "modelPath": MODEL_PATH,
             "device": DEVICE,
             "computeType": COMPUTE_TYPE,
+            "ready": _model_ready,
+            "error": _model_error,
+            "preloadModel": PRELOAD_MODEL,
         }
     )
 

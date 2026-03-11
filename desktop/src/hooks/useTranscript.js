@@ -25,7 +25,7 @@ const SPEECH_ERROR_MESSAGES = {
   'network': 'Network error during speech recognition. Please check your connection.',
   'service-not-allowed': 'Speech recognition service is not allowed. Please ensure you are using a supported browser (Chrome or Edge).',
 };
-const MIN_FINAL_CONFIDENCE = 0.32;
+const MIN_FINAL_CONFIDENCE = 0.18;
 const SHORT_SEGMENT_ALLOWLIST = new Set(['你好', '您好', '可以', '好的', '谢谢', '謝謝', '是的']);
 
 function appendRecognizedText(previous = '', next = '') {
@@ -52,10 +52,10 @@ function isLikelyHallucinatedShortSegment(text = '') {
   if (hasStrongPunctuation) return false;
 
   const hasCjk = /[\u3400-\u9fff]/.test(cleaned);
-  if (hasCjk && compact.length <= 2) return true;
+  if (hasCjk && compact.length <= 1) return true;
 
   const latinWords = cleaned.match(/[A-Za-z]+/g) || [];
-  if (!hasCjk && latinWords.length <= 1 && compact.length <= 3) return true;
+  if (!hasCjk && latinWords.length <= 1 && compact.length <= 2) return true;
 
   return false;
 }

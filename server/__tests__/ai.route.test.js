@@ -270,7 +270,7 @@ describe('AI transcribe chunk route', () => {
 
   it('falls through to next provider when current provider returns empty text', async () => {
     isTranscribeProviderConfigured.mockImplementation((provider) => (
-      provider === 'openai' || provider === 'local'
+      provider === 'windows-live-captions' || provider === 'local'
     ));
     transcribeAudioChunk
       .mockResolvedValueOnce('')
@@ -288,7 +288,7 @@ describe('AI transcribe chunk route', () => {
     expect(res.status).toBe(200);
     expect(res.body.text).toBe('fallback transcript');
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      provider: 'openai',
+      provider: 'windows-live-captions',
       sourceMode: 'system',
     }));
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({

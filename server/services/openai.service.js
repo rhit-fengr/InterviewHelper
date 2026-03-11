@@ -32,7 +32,7 @@ const LOCAL_TRANSCRIBE_URL = String(process.env.LOCAL_TRANSCRIBE_URL || '').trim
 const parsedLocalTranscribeTimeoutMs = Number(process.env.LOCAL_TRANSCRIBE_TIMEOUT_MS);
 const LOCAL_TRANSCRIBE_TIMEOUT_MS = Number.isFinite(parsedLocalTranscribeTimeoutMs)
   ? Math.max(5_000, parsedLocalTranscribeTimeoutMs)
-  : 120_000;
+  : 20_000;
 const parsedLocalTranscribeRetries = Number(process.env.LOCAL_TRANSCRIBE_RETRIES);
 const LOCAL_TRANSCRIBE_RETRIES = Number.isFinite(parsedLocalTranscribeRetries)
   ? Math.max(0, parsedLocalTranscribeRetries)

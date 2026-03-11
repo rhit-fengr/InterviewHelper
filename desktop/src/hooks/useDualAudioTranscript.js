@@ -17,6 +17,7 @@ const MIN_CHUNK_BYTES = 1024;
 const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
 const TRANSCRIBE_ERROR_PREFIX = 'Transcription error:';
+const TRANSCRIBE_FETCH_TIMEOUT_MS = 25_000;
 const SOURCE_MODES = ['mic', 'system'];
 const CROSS_SOURCE_DEDUPE_WINDOW_MS = 12_000;
 const MIN_CROSS_SOURCE_DEDUPE_CHARS = 8;
@@ -146,6 +147,7 @@ export function useDualAudioTranscript({
   const localWhisperLeaseRef = useRef(false);
   const recorderMimeTypeRef = useRef('audio/webm');
   const serviceFailureCountRef = useRef(0);
+  const timeoutFailureCountRef = useRef(0);
   const recentSegmentsBySourceRef = useRef({ mic: [], system: [] });
   const windowsCaptionsPollTimerRef = useRef(null);
   const requestDataTimersRef = useRef({ mic: null, system: null });
@@ -218,6 +220,7 @@ export function useDualAudioTranscript({
     pendingChunkBySourceRef.current = { mic: null, system: null };
     pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
     recentSegmentsBySourceRef.current = { mic: [], system: [] };
+    timeoutFailureCountRef.current = 0;
 
     setIsListening(false);
   }, []);
@@ -236,10 +239,18 @@ export function useDualAudioTranscript({
     form.append('sourceMode', normalizedSourceMode);
 
     try {
-      const response = await fetch(`${SERVER_URL}/api/ai/transcribe-chunk`, {
-        method: 'POST',
-        body: form,
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TRANSCRIBE_FETCH_TIMEOUT_MS);
+      let response;
+      try {
+        response = await fetch(`${SERVER_URL}/api/ai/transcribe-chunk`, {
+          method: 'POST',
+          body: form,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (response.status === 429) {
@@ -275,6 +286,7 @@ export function useDualAudioTranscript({
         recentSegmentsBySourceRef.current[sourceFromServer] = sourceRecent.slice(-MAX_RECENT_SEGMENTS_PER_SOURCE);
       }
       serviceFailureCountRef.current = 0;
+      timeoutFailureCountRef.current = 0;
 
       const nextTranscript = appendTranscriptSegment(transcriptRef.current, cleanedSegment);
       transcriptRef.current = nextTranscript;
@@ -303,9 +315,15 @@ export function useDualAudioTranscript({
       }
       if (/rate limit/i.test(String(message))) {
         setError('Rate limit reached while transcribing audio. Wait a moment and try again.');
+      } else if (err?.name === 'AbortError') {
+        timeoutFailureCountRef.current += 1;
+        if (timeoutFailureCountRef.current >= 3) {
+          setError('Transcription request timed out repeatedly. Retrying with the latest audio chunk.');
+        }
       } else if (/failed to fetch/i.test(String(message))) {
         setError(`Cannot reach transcription service at ${SERVER_URL}. Ensure server is running.`);
       } else {
+        timeoutFailureCountRef.current = 0;
         setError(`${TRANSCRIBE_ERROR_PREFIX} ${message}`);
       }
     }
@@ -377,7 +395,10 @@ export function useDualAudioTranscript({
           normalizedTranscribeProvider === 'windows-live-captions'
           && captureSystem
         );
-        const shouldEnsureLocalService = normalizedTranscribeProvider === 'local';
+        const shouldEnsureLocalService = (
+          normalizedTranscribeProvider === 'local'
+          || (normalizedTranscribeProvider === 'auto' && captureSystem)
+        );
 
         if (shouldEnsureLocalService && window?.electronAPI?.ensureLocalWhisper) {
           const localResult = await window.electronAPI.ensureLocalWhisper();

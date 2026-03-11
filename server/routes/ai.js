@@ -68,7 +68,7 @@ function getTranscribeProviderChain(req) {
   // In auto mode, prioritize regular audio STT providers first.
   // Windows Live Captions is a useful fallback for system audio but should not block the path.
   const preferredCandidates = sourceMode === 'system'
-    ? ['openai', 'local', 'gemini', 'windows-live-captions']
+    ? ['windows-live-captions', 'local', 'openai', 'gemini']
     : ['openai', 'local', 'gemini'];
   const candidates = preferredCandidates.filter((provider) => (
     isTranscribeProviderConfigured(provider)

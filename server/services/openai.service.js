@@ -6,7 +6,7 @@ const OpenAI = require('openai');
 const path = require('path');
 
 const SUPPORTED_PROVIDERS = ['openai', 'gemini'];
-const SUPPORTED_TRANSCRIBE_PROVIDERS = ['openai', 'gemini', 'local'];
+const SUPPORTED_TRANSCRIBE_PROVIDERS = ['openai', 'gemini', 'local', 'windows-live-captions'];
 const DEFAULT_PROVIDER = normalizeProvider(process.env.AI_PROVIDER || 'openai');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
@@ -37,6 +37,11 @@ const parsedLocalTranscribeRetries = Number(process.env.LOCAL_TRANSCRIBE_RETRIES
 const LOCAL_TRANSCRIBE_RETRIES = Number.isFinite(parsedLocalTranscribeRetries)
   ? Math.max(0, parsedLocalTranscribeRetries)
   : 1;
+const parsedWindowsCaptionsTimeoutMs = Number(process.env.WINDOWS_CAPTIONS_TIMEOUT_MS);
+const WINDOWS_CAPTIONS_TIMEOUT_MS = Number.isFinite(parsedWindowsCaptionsTimeoutMs)
+  ? Math.max(800, parsedWindowsCaptionsTimeoutMs)
+  : 1_800;
+const WINDOWS_CAPTIONS_SCRIPT_PATH = path.resolve(__dirname, '../scripts/get_windows_live_caption.ps1');
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -75,6 +80,7 @@ let localWhisperManagedProcess = null;
 let localWhisperRecentLogs = [];
 let localWhisperLastExitCode = null;
 let localWhisperLastStartError = '';
+let lastWindowsLiveCaptionsText = '';
 
 function ensureTrailingSlash(url) {
   return typeof url === 'string' && !url.endsWith('/')
@@ -102,6 +108,7 @@ function isProviderConfigured(provider) {
 function isTranscribeProviderConfigured(provider) {
   const p = normalizeTranscribeProvider(provider);
   if (p === 'local') return Boolean(LOCAL_TRANSCRIBE_URL);
+  if (p === 'windows-live-captions') return process.platform === 'win32';
   return isProviderConfigured(p);
 }
 
@@ -412,6 +419,140 @@ async function ensureLocalWhisperRunning() {
   return Boolean(await localWhisperBootPromise);
 }
 
+function normalizeWindowsCaptionText(text = '') {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function computeWindowsCaptionDelta(nextText = '') {
+  const current = normalizeWindowsCaptionText(nextText);
+  if (!current) {
+    lastWindowsLiveCaptionsText = '';
+    return '';
+  }
+
+  const previous = lastWindowsLiveCaptionsText;
+  lastWindowsLiveCaptionsText = current;
+  if (!previous) return current;
+  if (current === previous) return '';
+  if (current.startsWith(previous)) {
+    return current.slice(previous.length).trim();
+  }
+  if (current.includes(previous)) {
+    const index = current.indexOf(previous);
+    return current.slice(index + previous.length).trim();
+  }
+  if (previous.includes(current)) return '';
+  return current;
+}
+
+function runWindowsCaptionsProbe() {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      const err = new Error('Windows Live Captions provider is only available on Windows.');
+      err.status = 503;
+      reject(err);
+      return;
+    }
+    if (!fs.existsSync(WINDOWS_CAPTIONS_SCRIPT_PATH)) {
+      const err = new Error(`Windows captions probe script not found: ${WINDOWS_CAPTIONS_SCRIPT_PATH}`);
+      err.status = 503;
+      reject(err);
+      return;
+    }
+
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', WINDOWS_CAPTIONS_SCRIPT_PATH,
+    ], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    const timeoutId = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // ignore kill errors
+      }
+      const err = new Error('Windows Live Captions probe timed out.');
+      err.status = 504;
+      reject(err);
+    }, WINDOWS_CAPTIONS_TIMEOUT_MS);
+
+    child.stdout?.on('data', (buf) => {
+      stdout += String(buf || '');
+    });
+    child.stderr?.on('data', (buf) => {
+      stderr += String(buf || '');
+    });
+
+    child.once('error', (err) => {
+      clearTimeout(timeoutId);
+      const probeErr = new Error(`Failed to run Windows Live Captions probe: ${err?.message || err}`);
+      probeErr.status = 503;
+      reject(probeErr);
+    });
+
+    child.once('close', (code) => {
+      clearTimeout(timeoutId);
+      const output = String(stdout || '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const lastLine = output.length > 0 ? output[output.length - 1] : '';
+      let parsed = null;
+      if (lastLine) {
+        try {
+          parsed = JSON.parse(lastLine);
+        } catch {
+          parsed = null;
+        }
+      }
+
+      if (!parsed) {
+        const err = new Error(`Windows Live Captions probe returned invalid output. ${String(stderr || '').trim()}`.trim());
+        err.status = 502;
+        reject(err);
+        return;
+      }
+
+      if (!parsed.ok) {
+        const status = String(parsed.status || '').trim().toLowerCase();
+        // Soft-fail common discovery states to avoid breaking the whole STT chain.
+        if (status === 'not_running' || status === 'captions_not_found' || status === 'window_not_found') {
+          resolve(parsed);
+          return;
+        }
+        const message = String(parsed.error || parsed.status || stderr || `exit code ${code}`);
+        const err = new Error(`Windows Live Captions probe failed: ${message}`);
+        err.status = 503;
+        reject(err);
+        return;
+      }
+
+      resolve(parsed);
+    });
+  });
+}
+
+async function transcribeWithWindowsLiveCaptions({ sourceMode }) {
+  const normalizedSourceMode = String(sourceMode || '').trim().toLowerCase();
+  if (normalizedSourceMode && normalizedSourceMode !== 'system') {
+    // This provider is intended for system/interviewer stream only.
+    return '';
+  }
+  const result = await runWindowsCaptionsProbe();
+  if (result && result.ok === false) {
+    return '';
+  }
+  return computeWindowsCaptionDelta(result?.text || '');
+}
+
 function extractGeminiText(response = {}) {
   const parts = response?.candidates?.[0]?.content?.parts;
   if (!Array.isArray(parts)) return '';
@@ -690,6 +831,7 @@ async function transcribeAudioChunk({
   audioBuffer,
   mimeType = 'audio/webm',
   languageHint,
+  sourceMode = 'unknown',
 }) {
   if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
     const err = new Error('audio chunk is required');
@@ -711,6 +853,8 @@ async function transcribeAudioChunk({
         ? 'Audio transcription requires GEMINI_API_KEY.'
         : transcriptionProvider === 'local'
           ? 'Audio transcription requires LOCAL_TRANSCRIBE_URL.'
+          : transcriptionProvider === 'windows-live-captions'
+            ? 'Windows Live Captions provider is only available on Windows 11.'
         : 'Audio transcription requires OPENAI_API_KEY.'
     );
     err.status = 503;
@@ -722,6 +866,9 @@ async function transcribeAudioChunk({
   }
 
   try {
+    if (transcriptionProvider === 'windows-live-captions') {
+      return await transcribeWithWindowsLiveCaptions({ sourceMode });
+    }
     if (transcriptionProvider === 'gemini') {
       return await transcribeWithGemini({ audioBuffer, mimeType, languageHint });
     }

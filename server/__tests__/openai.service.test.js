@@ -50,6 +50,7 @@ describe('provider helpers', () => {
   it('normalizes unknown transcribe provider to default openai', () => {
     expect(normalizeTranscribeProvider('unknown-provider')).toBe('openai');
     expect(normalizeTranscribeProvider('local')).toBe('local');
+    expect(normalizeTranscribeProvider('windows-live-captions')).toBe('windows-live-captions');
   });
 
   it('reports gemini provider as unconfigured when GEMINI_API_KEY is not set', () => {
@@ -96,6 +97,17 @@ describe('transcribeAudioChunk - validation', () => {
     await expect(
       transcribeAudioChunk({ provider: 'local', audioBuffer: Buffer.from('data') })
     ).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('returns empty when windows-live-captions is selected for mic source', async () => {
+    if (process.platform !== 'win32') return;
+    await expect(
+      transcribeAudioChunk({
+        provider: 'windows-live-captions',
+        sourceMode: 'mic',
+        audioBuffer: Buffer.from('data'),
+      })
+    ).resolves.toBe('');
   });
 });
 

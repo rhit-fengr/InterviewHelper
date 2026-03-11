@@ -30,6 +30,11 @@ const TRANSCRIPT_NOISE_PATTERNS = [
   /caption(?:s)?\s*by\s*[A-Za-z0-9_.\-]{1,24}/gi,
   /字幕由[^\s,，。.!?？]{1,24}(?:提供|制作|製作)?/gi,
 ];
+const TRANSCRIPT_NOISE_ONLY_PATTERNS = [
+  /^(感谢观看|謝謝觀看|谢谢观看|本视频到这里|本影片到這裡)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
+  /^(点赞订阅|點讚訂閱|記得訂閱|记得订阅|别忘了订阅|別忘了訂閱|like and subscribe)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
+  /^(字幕|caption|captions)(?:\s|$)/iu,
+];
 
 export function sanitizeTranscriptSegment(text = '') {
   let cleaned = String(text || '').trim();
@@ -47,6 +52,9 @@ export function sanitizeTranscriptSegment(text = '') {
 
   // Guard against standalone watermark-like leftovers.
   if (/^(字幕|captions?)(?:\s|$)/i.test(cleaned) && cleaned.length <= 24) {
+    return '';
+  }
+  if (TRANSCRIPT_NOISE_ONLY_PATTERNS.some((pattern) => pattern.test(cleaned))) {
     return '';
   }
 

@@ -40,7 +40,7 @@ LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8765/transcribe
 ```
 
 Desktop `Interview Setup -> Transcription Provider`:
-- `Auto` (OpenAI -> Local -> Gemini), or
+- `Auto` (System: Windows Live Captions -> OpenAI -> Local -> Gemini), or
 - `Local Whisper Service`.
 
 ## 4. Optional model tuning
@@ -50,12 +50,12 @@ Environment variables:
 - `WHISPER_MODEL` (default: `small`)
 - `WHISPER_DEVICE` (default: `cpu`)
 - `WHISPER_COMPUTE_TYPE` (default: `int8`)
-- `WHISPER_BEAM_SIZE` (default: `4`)
-- `WHISPER_BEST_OF` (default: `3`)
-- `WHISPER_LOG_PROB_THRESHOLD` (default: `-0.8`)
-- `WHISPER_NO_SPEECH_THRESHOLD` (default: `0.45`)
-- `WHISPER_COMPRESSION_RATIO_THRESHOLD` (default: `2.2`)
-- `WHISPER_TEMPERATURES` (default: `0.0,0.2`)
+- `WHISPER_BEAM_SIZE` (default: `1`)
+- `WHISPER_BEST_OF` (default: `1`)
+- `WHISPER_LOG_PROB_THRESHOLD` (default: `-1.2`)
+- `WHISPER_NO_SPEECH_THRESHOLD` (default: `0.6`)
+- `WHISPER_COMPRESSION_RATIO_THRESHOLD` (default: `2.6`)
+- `WHISPER_TEMPERATURES` (default: `0.0`)
 - `WHISPER_VAD_FILTER` (default: `false`)
 - `LOCAL_WHISPER_PORT` (default: `8765`)
 

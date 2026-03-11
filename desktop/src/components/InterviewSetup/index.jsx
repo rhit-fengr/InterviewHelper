@@ -51,7 +51,8 @@ export default function InterviewSetup({ onStart }) {
           value={setup.sttProvider || 'auto'}
           onChange={handleChange('sttProvider')}
         >
-          <option value="auto">Auto (OpenAI -> Local -> Gemini)</option>
+          <option value="auto">Auto (System: Windows Live Captions -> OpenAI -> Local -> Gemini)</option>
+          <option value="windows-live-captions">Windows Live Captions (System only, Win11)</option>
           <option value="local">Local Whisper Service (no cloud)</option>
           <option value="openai">OpenAI (Whisper)</option>
           <option value="gemini">Gemini (best effort)</option>

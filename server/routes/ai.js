@@ -46,7 +46,7 @@ function getProviderFromRequest(req) {
 function getTranscribeProviderFromRequest(req) {
   const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
   const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
-  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local') {
+  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local' || explicitRaw === 'windows-live-captions') {
     return normalizeTranscribeProvider(explicitRaw);
   }
 
@@ -58,13 +58,19 @@ function getTranscribeProviderFromRequest(req) {
 }
 
 function getTranscribeProviderChain(req) {
+  const sourceMode = String(req.body?.sourceMode || '').trim().toLowerCase();
   const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
   const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
-  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local') {
+  if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local' || explicitRaw === 'windows-live-captions') {
     return [normalizeTranscribeProvider(explicitRaw)];
   }
 
-  const candidates = ['openai', 'local', 'gemini'].filter((provider) => (
+  // In auto mode, prioritize regular audio STT providers first.
+  // Windows Live Captions is a useful fallback for system audio but should not block the path.
+  const preferredCandidates = sourceMode === 'system'
+    ? ['openai', 'local', 'gemini', 'windows-live-captions']
+    : ['openai', 'local', 'gemini'];
+  const candidates = preferredCandidates.filter((provider) => (
     isTranscribeProviderConfigured(provider)
   ));
 
@@ -216,7 +222,7 @@ router.post('/detect-question', async (req, res) => {
  * multipart/form-data:
  *  - audio: Blob/File chunk
  *  - provider?: openai|gemini
- *  - transcribeProvider?: auto|openai|local|gemini
+ *  - transcribeProvider?: auto|openai|local|gemini|windows-live-captions
  *  - language?: BCP-47 hint
  *  - sourceMode?: mic|system|mic-system
  */
@@ -244,9 +250,18 @@ router.post('/transcribe-chunk', (req, res, next) => {
           audioBuffer: req.file.buffer,
           mimeType: req.file.mimetype,
           languageHint: req.body?.language,
+          sourceMode: req.body?.sourceMode,
         });
+        const normalizedText = String(text || '').trim();
+        const isLastAttempt = index >= providerChain.length - 1;
+        if (!normalizedText && !isLastAttempt) {
+          console.warn(
+            `[AI transcribe-chunk] provider ${provider} returned empty text; trying next provider`
+          );
+          continue;
+        }
         return res.json({
-          text,
+          text: normalizedText,
           sourceMode: req.body?.sourceMode || 'unknown',
           providerUsed: provider,
         });

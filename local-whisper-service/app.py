@@ -28,18 +28,18 @@ MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
 MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", "").strip()
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "4"))
-BEST_OF = int(os.getenv("WHISPER_BEST_OF", "3"))
-LOG_PROB_THRESHOLD = float(os.getenv("WHISPER_LOG_PROB_THRESHOLD", "-0.8"))
-NO_SPEECH_THRESHOLD = float(os.getenv("WHISPER_NO_SPEECH_THRESHOLD", "0.45"))
-COMPRESSION_RATIO_THRESHOLD = float(os.getenv("WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.2"))
+BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
+BEST_OF = int(os.getenv("WHISPER_BEST_OF", "1"))
+LOG_PROB_THRESHOLD = float(os.getenv("WHISPER_LOG_PROB_THRESHOLD", "-1.2"))
+NO_SPEECH_THRESHOLD = float(os.getenv("WHISPER_NO_SPEECH_THRESHOLD", "0.6"))
+COMPRESSION_RATIO_THRESHOLD = float(os.getenv("WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.6"))
 VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "false").strip().lower() in {
     "1",
     "true",
     "yes",
     "on",
 }
-RAW_TEMPERATURES = os.getenv("WHISPER_TEMPERATURES", "0.0,0.2")
+RAW_TEMPERATURES = os.getenv("WHISPER_TEMPERATURES", "0.0")
 TEMPERATURES = tuple(
     float(item.strip())
     for item in RAW_TEMPERATURES.split(",")
@@ -117,7 +117,8 @@ def _transcribe_once(model: WhisperModel, tmp_path: str, language: Optional[str]
         "beam_size": max(1, BEAM_SIZE),
         "best_of": max(1, BEST_OF),
         "vad_filter": vad_filter,
-        "condition_on_previous_text": True,
+        # Chunk-by-chunk mode: avoid carrying prior chunk hallucinations forward.
+        "condition_on_previous_text": False,
         "compression_ratio_threshold": COMPRESSION_RATIO_THRESHOLD,
         "log_prob_threshold": LOG_PROB_THRESHOLD,
         "no_speech_threshold": NO_SPEECH_THRESHOLD,
@@ -134,7 +135,7 @@ def _transcribe_once(model: WhisperModel, tmp_path: str, language: Optional[str]
             "task": "transcribe",
             "beam_size": max(1, BEAM_SIZE),
             "vad_filter": vad_filter,
-            "condition_on_previous_text": True,
+            "condition_on_previous_text": False,
         }
         segments, _info = model.transcribe(tmp_path, **fallback_options)
 

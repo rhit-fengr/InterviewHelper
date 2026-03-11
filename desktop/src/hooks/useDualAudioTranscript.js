@@ -7,11 +7,12 @@ import {
 } from '../utils/interviewTranscript';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
-const DEFAULT_CHUNK_MS = 1800;
-const DEFAULT_SYSTEM_CHUNK_MS = 2400;
-const LOCAL_CHUNK_MS = 2800;
-const LOCAL_SYSTEM_CHUNK_MS = 4200;
-const GEMINI_CHUNK_MS = 3200;
+const DEFAULT_CHUNK_MS = 1500;
+const DEFAULT_SYSTEM_CHUNK_MS = 1800;
+const LOCAL_CHUNK_MS = 2000;
+const LOCAL_SYSTEM_CHUNK_MS = 2600;
+const GEMINI_CHUNK_MS = 2400;
+const WINDOWS_CAPTIONS_POLL_MS = 1200;
 const MIN_CHUNK_BYTES = 1024;
 const MAX_TRANSCRIPT_LINES = 120;
 const MAX_TRANSCRIPT_CHARS = 6000;
@@ -79,7 +80,7 @@ function getChunkDurationMs(provider = 'openai', sourceMode = 'mic') {
   const normalized = normalizeEffectiveProvider(provider);
   const source = String(sourceMode || '').trim().toLowerCase();
   const isSystem = source === 'system';
-  if (normalized === 'gemini') return isSystem ? Math.max(GEMINI_CHUNK_MS, 4200) : GEMINI_CHUNK_MS;
+  if (normalized === 'gemini') return isSystem ? Math.max(GEMINI_CHUNK_MS, 3000) : GEMINI_CHUNK_MS;
   if (normalized === 'local') return isSystem ? LOCAL_SYSTEM_CHUNK_MS : LOCAL_CHUNK_MS;
   return isSystem ? DEFAULT_SYSTEM_CHUNK_MS : DEFAULT_CHUNK_MS;
 }
@@ -115,6 +116,8 @@ export function useDualAudioTranscript({
   language = 'en-US',
   provider = 'openai',
   transcribeProvider = 'auto',
+  captureMic = true,
+  captureSystem = true,
   onTranscriptChange,
   onFinalSegment,
 } = {}) {
@@ -130,8 +133,6 @@ export function useDualAudioTranscript({
   const [activeLanguage, setActiveLanguage] = useState(primaryLanguage);
 
   const recordersRef = useRef({ mic: null, system: null });
-  const recorderRotateTimersRef = useRef({ mic: null, system: null });
-  const recorderRestartPendingRef = useRef({ mic: false, system: false });
   const micStreamRef = useRef(null);
   const systemStreamRef = useRef(null);
   const transcriptRef = useRef('');
@@ -146,6 +147,8 @@ export function useDualAudioTranscript({
   const recorderMimeTypeRef = useRef('audio/webm');
   const serviceFailureCountRef = useRef(0);
   const recentSegmentsBySourceRef = useRef({ mic: [], system: [] });
+  const windowsCaptionsPollTimerRef = useRef(null);
+  const requestDataTimersRef = useRef({ mic: null, system: null });
 
   useEffect(() => {
     onChangeRef.current = onTranscriptChange;
@@ -163,19 +166,27 @@ export function useDualAudioTranscript({
     setActiveLanguage(primaryLanguage);
   }, [primaryLanguage]);
 
-  const clearSourceTimer = useCallback((sourceMode) => {
-    const timer = recorderRotateTimersRef.current[sourceMode];
-    if (timer) {
-      clearTimeout(timer);
-      recorderRotateTimersRef.current[sourceMode] = null;
-    }
-    recorderRestartPendingRef.current[sourceMode] = false;
+  const updateListeningState = useCallback(() => {
+    const hasActiveRecorder = SOURCE_MODES.some((sourceMode) => {
+      const recorder = recordersRef.current[sourceMode];
+      return Boolean(recorder && recorder.state === 'recording');
+    });
+    setIsListening(hasActiveRecorder);
   }, []);
 
   const stopCapture = useCallback(() => {
-    SOURCE_MODES.forEach((sourceMode) => clearSourceTimer(sourceMode));
+    if (windowsCaptionsPollTimerRef.current) {
+      clearInterval(windowsCaptionsPollTimerRef.current);
+      windowsCaptionsPollTimerRef.current = null;
+    }
 
     SOURCE_MODES.forEach((sourceMode) => {
+      const requestDataTimer = requestDataTimersRef.current[sourceMode];
+      if (requestDataTimer) {
+        clearInterval(requestDataTimer);
+        requestDataTimersRef.current[sourceMode] = null;
+      }
+
       const recorder = recordersRef.current[sourceMode];
       if (recorder && recorder.state !== 'inactive') {
         try {
@@ -209,7 +220,7 @@ export function useDualAudioTranscript({
     recentSegmentsBySourceRef.current = { mic: [], system: [] };
 
     setIsListening(false);
-  }, [clearSourceTimer]);
+  }, []);
 
   const transcribeChunk = useCallback(async (chunkBlob, sourceMode) => {
     const normalizedSourceMode = String(sourceMode || '').trim().toLowerCase() || 'unknown';
@@ -362,10 +373,11 @@ export function useDualAudioTranscript({
         setError(null);
 
         const normalizedTranscribeProvider = String(transcribeProvider || 'auto').trim().toLowerCase();
-        const shouldEnsureLocalService = (
-          normalizedTranscribeProvider === 'local' ||
-          normalizedTranscribeProvider === 'auto'
+        const useWindowsLiveCaptionsPoller = (
+          normalizedTranscribeProvider === 'windows-live-captions'
+          && captureSystem
         );
+        const shouldEnsureLocalService = normalizedTranscribeProvider === 'local';
 
         if (shouldEnsureLocalService && window?.electronAPI?.ensureLocalWhisper) {
           const localResult = await window.electronAPI.ensureLocalWhisper();
@@ -376,39 +388,54 @@ export function useDualAudioTranscript({
           }
         }
 
-        if (!navigator?.mediaDevices?.getUserMedia || !navigator?.mediaDevices?.getDisplayMedia) {
-          throw new Error('Browser does not support required media capture APIs.');
+        if (captureMic && !navigator?.mediaDevices?.getUserMedia) {
+          throw new Error('Browser does not support microphone capture API.');
+        }
+        if (captureSystem && !useWindowsLiveCaptionsPoller && !navigator?.mediaDevices?.getDisplayMedia) {
+          throw new Error('Browser does not support screen audio capture API.');
         }
         if (typeof MediaRecorder === 'undefined') {
           throw new Error('MediaRecorder is not supported in this environment.');
         }
 
-        const micStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            // Suppress desktop playback leakage into the mic channel in dual-source mode.
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-        startupMicStream = micStream;
+        let micStream = null;
+        let systemStream = null;
+        let systemAudioTracks = [];
 
-        const systemStream = await navigator.mediaDevices.getDisplayMedia({
-          audio: true,
-          video: true,
-        });
-        startupSystemStream = systemStream;
-
-        const systemAudioTracks = systemStream.getAudioTracks();
-        if (systemAudioTracks.length === 0) {
-          throw new Error('No system audio track was selected. Re-share with "Share audio" enabled.');
+        if (captureMic) {
+          micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              // Suppress desktop playback leakage into the mic channel in dual-source mode.
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+            video: false,
+          });
+          startupMicStream = micStream;
         }
-        systemAudioTracks.forEach((track) => { track.enabled = true; });
+
+        if (captureSystem && !useWindowsLiveCaptionsPoller) {
+          systemStream = await navigator.mediaDevices.getDisplayMedia({
+            audio: true,
+            video: true,
+          });
+          startupSystemStream = systemStream;
+
+          systemAudioTracks = systemStream.getAudioTracks();
+          if (systemAudioTracks.length === 0) {
+            throw new Error('No system audio track was selected. Re-share with "Share audio" enabled.');
+          }
+          systemAudioTracks.forEach((track) => { track.enabled = true; });
+        }
+
+        if (!micStream && !systemStream && !useWindowsLiveCaptionsPoller) {
+          throw new Error('No capture source enabled.');
+        }
 
         if (cancelled || !enabledRef.current) {
-          micStream.getTracks().forEach((track) => track.stop());
-          systemStream.getTracks().forEach((track) => track.stop());
+          micStream?.getTracks().forEach((track) => track.stop());
+          systemStream?.getTracks().forEach((track) => track.stop());
           return;
         }
 
@@ -435,32 +462,12 @@ export function useDualAudioTranscript({
             ? new MediaRecorder(audioOnlyStream, { mimeType })
             : new MediaRecorder(audioOnlyStream);
           recorderMimeTypeRef.current = recorder.mimeType || mimeType || recorderMimeTypeRef.current;
-
-          const scheduleRotate = () => {
-            clearSourceTimer(sourceMode);
-            const chunkMs = getChunkDurationMs(recorderProvider, sourceMode);
-            recorderRotateTimersRef.current[sourceMode] = setTimeout(() => {
-              if (!enabledRef.current || cancelled) return;
-              if (recorder.state !== 'recording') return;
-              recorderRestartPendingRef.current[sourceMode] = true;
-              try {
-                recorder.stop();
-              } catch {
-                recorderRestartPendingRef.current[sourceMode] = false;
-              }
-            }, chunkMs);
-          };
-
-          const startSegment = () => {
-            if (!enabledRef.current || cancelled) return;
-            if (recorder.state !== 'inactive') return;
-            try {
-              recorder.start();
-              scheduleRotate();
-            } catch {
-              setError(`Audio recorder failed to start for ${sourceMode}. Stop and start listening again.`);
-            }
-          };
+          const chunkMs = getChunkDurationMs(recorderProvider, sourceMode);
+          const normalizedSelectedTranscribeProvider = String(transcribeProvider || 'auto').trim().toLowerCase();
+          const useRequestDataMode = (
+            normalizedSelectedTranscribeProvider === 'local'
+            || (normalizedSelectedTranscribeProvider === 'auto' && sourceMode === 'system')
+          );
 
           recorder.ondataavailable = (event) => {
             if (!enabledRef.current) return;
@@ -474,53 +481,95 @@ export function useDualAudioTranscript({
           };
 
           recorder.onstart = () => {
-            setIsListening(true);
+            updateListeningState();
           };
 
           recorder.onstop = () => {
-            const shouldRestart = recorderRestartPendingRef.current[sourceMode]
-              && enabledRef.current
-              && !cancelled;
-            recorderRestartPendingRef.current[sourceMode] = false;
-            if (shouldRestart) {
-              const replacement = createRecorder(sourceMode, sourceStream);
-              recordersRef.current[sourceMode] = replacement;
-              return;
+            const timer = requestDataTimersRef.current[sourceMode];
+            if (timer) {
+              clearInterval(timer);
+              requestDataTimersRef.current[sourceMode] = null;
             }
-            if (!enabledRef.current) {
-              setIsListening(false);
+            if (recordersRef.current[sourceMode] === recorder) {
+              recordersRef.current[sourceMode] = null;
             }
+            updateListeningState();
           };
 
-          startSegment();
+          if (!enabledRef.current || cancelled) return null;
+          if (recorder.state !== 'inactive') return recorder;
+
+          try {
+            if (useRequestDataMode) {
+              recorder.start();
+              requestDataTimersRef.current[sourceMode] = setInterval(() => {
+                if (!enabledRef.current || recorder.state !== 'recording') return;
+                try {
+                  recorder.requestData();
+                } catch {
+                  // Ignore requestData race conditions during shutdown.
+                }
+              }, Math.max(900, chunkMs));
+            } else {
+              // Use timeslice mode to avoid stop/start gaps that can drop trailing words.
+              recorder.start(Math.max(900, chunkMs));
+            }
+          } catch {
+            setError(`Audio recorder failed to start for ${sourceMode}. Stop and start listening again.`);
+            return null;
+          }
           return recorder;
         };
 
-        const micRecorder = createRecorder('mic', micStream);
-        const systemRecorder = createRecorder('system', new MediaStream(systemAudioTracks));
+        const micRecorder = captureMic ? createRecorder('mic', micStream) : null;
+        let systemRecorder = null;
+        if (captureSystem && useWindowsLiveCaptionsPoller) {
+          const virtualRecorder = {
+            state: 'recording',
+            stop() {
+              this.state = 'inactive';
+            },
+          };
+          recordersRef.current.system = virtualRecorder;
+          systemRecorder = virtualRecorder;
+
+          const enqueuePoll = () => {
+            if (!enabledRef.current || cancelled) return;
+            enqueueChunk(new Blob(['windows-live-captions-poll'], { type: 'text/plain' }), 'system');
+          };
+          enqueuePoll();
+          windowsCaptionsPollTimerRef.current = setInterval(enqueuePoll, WINDOWS_CAPTIONS_POLL_MS);
+          updateListeningState();
+        } else if (captureSystem) {
+          systemRecorder = createRecorder('system', new MediaStream(systemAudioTracks));
+        }
         if (!micRecorder && !systemRecorder) {
           throw new Error('No audio tracks available for recording.');
         }
 
         recordersRef.current.mic = micRecorder;
-        recordersRef.current.system = systemRecorder;
+        if (!useWindowsLiveCaptionsPoller) {
+          recordersRef.current.system = systemRecorder;
+        }
 
-        for (const track of systemStream.getVideoTracks()) {
-          track.onended = () => {
-            if (enabledRef.current) {
-              setError('System audio share ended. Re-share screen audio to continue interviewer transcription.');
-              clearSourceTimer('system');
-              const recorder = recordersRef.current.system;
-              if (recorder && recorder.state !== 'inactive') {
-                try {
-                  recorder.stop();
-                } catch {
-                  // ignore stop errors
+        if (captureSystem && systemStream) {
+          for (const track of systemStream.getVideoTracks()) {
+            track.onended = () => {
+              if (enabledRef.current) {
+                setError('System audio share ended. Re-share screen audio to continue interviewer transcription.');
+                const recorder = recordersRef.current.system;
+                if (recorder && recorder.state !== 'inactive') {
+                  try {
+                    recorder.stop();
+                  } catch {
+                    // ignore stop errors
+                  }
                 }
+                recordersRef.current.system = null;
+                updateListeningState();
               }
-              recordersRef.current.system = null;
-            }
-          };
+            };
+          }
         }
       } catch (err) {
         if (startupMicStream) {
@@ -541,7 +590,7 @@ export function useDualAudioTranscript({
       cancelled = true;
       stopCapture();
     };
-  }, [enabled, primaryLanguage, provider, transcribeProvider, clearSourceTimer, stopCapture, transcribeChunk, enqueueChunk]);
+  }, [enabled, primaryLanguage, provider, transcribeProvider, captureMic, captureSystem, stopCapture, transcribeChunk, enqueueChunk, updateListeningState]);
 
   const clearTranscript = () => {
     transcriptRef.current = '';

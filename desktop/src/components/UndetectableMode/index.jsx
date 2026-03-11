@@ -66,6 +66,8 @@ export default function UndetectableMode({ onBack }) {
   const detectionTimeoutRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
   const lastAutoAnswerRef = useRef(null);
+  const micLiveTranscriptRef = useRef('');
+  const systemLiveTranscriptRef = useRef('');
   // Track the in-flight question so we can save user+assistant pair when generation completes
   const pendingQuestionRef = useRef(null);
   const prevIsLoadingRef = useRef(false);
@@ -146,10 +148,34 @@ export default function UndetectableMode({ onBack }) {
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
 
+  const pushCombinedTranscript = useCallback(() => {
+    const combined = [micLiveTranscriptRef.current, systemLiveTranscriptRef.current]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    handleTranscriptUpdate(combined);
+  }, [handleTranscriptUpdate]);
+
+  const handleMicTranscriptUpdate = useCallback((text) => {
+    micLiveTranscriptRef.current = String(text || '');
+    if (audioInputMode === 'mic-system') {
+      pushCombinedTranscript();
+      return;
+    }
+    handleTranscriptUpdate(text);
+  }, [audioInputMode, handleTranscriptUpdate, pushCombinedTranscript]);
+
+  const handleSystemTranscriptUpdate = useCallback((text) => {
+    systemLiveTranscriptRef.current = String(text || '');
+    if (audioInputMode === 'mic-system') {
+      pushCombinedTranscript();
+    }
+  }, [audioInputMode, pushCombinedTranscript]);
+
   const speechTranscript = useTranscript({
-    enabled: isRunning && audioInputMode === 'mic',
+    enabled: isRunning && (audioInputMode === 'mic' || audioInputMode === 'mic-system'),
     language: interviewLangs,
-    onTranscriptChange: handleTranscriptUpdate,
+    onTranscriptChange: handleMicTranscriptUpdate,
   });
 
   const dualAudioTranscript = useDualAudioTranscript({
@@ -157,21 +183,26 @@ export default function UndetectableMode({ onBack }) {
     language: interviewLangs,
     provider: setup.aiProvider,
     transcribeProvider: setup.sttProvider,
-    onTranscriptChange: handleTranscriptUpdate,
+    captureMic: false,
+    captureSystem: true,
+    onTranscriptChange: handleSystemTranscriptUpdate,
   });
 
   const transcript = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.transcript
+    ? [speechTranscript.transcript, dualAudioTranscript.transcript]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .join('\n')
     : speechTranscript.transcript;
   const transcriptPreview = getRecentTranscriptLines(transcript);
   const activeLanguage = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.activeLanguage
+    ? speechTranscript.activeLanguage
     : speechTranscript.activeLanguage;
   const transcriptError = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.error
+    ? [speechTranscript.error, dualAudioTranscript.error].filter(Boolean).join(' | ')
     : speechTranscript.error;
   const isListening = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.isListening
+    ? (speechTranscript.isListening || dualAudioTranscript.isListening)
     : speechTranscript.isListening;
 
   useEffect(() => {
@@ -209,10 +240,14 @@ export default function UndetectableMode({ onBack }) {
       const next = !prev;
       if (!next) {
         pendingQuestionRef.current = null;
+        micLiveTranscriptRef.current = '';
+        systemLiveTranscriptRef.current = '';
         speechTranscript.clearTranscript();
         dualAudioTranscript.clearTranscript();
       } else {
         lastAutoAnswerRef.current = null;
+        micLiveTranscriptRef.current = '';
+        systemLiveTranscriptRef.current = '';
       }
       return next;
     });

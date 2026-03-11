@@ -25,6 +25,40 @@ const SPEECH_ERROR_MESSAGES = {
   'network': 'Network error during speech recognition. Please check your connection.',
   'service-not-allowed': 'Speech recognition service is not allowed. Please ensure you are using a supported browser (Chrome or Edge).',
 };
+const MIN_FINAL_CONFIDENCE = 0.32;
+const SHORT_SEGMENT_ALLOWLIST = new Set(['你好', '您好', '可以', '好的', '谢谢', '謝謝', '是的']);
+
+function appendRecognizedText(previous = '', next = '') {
+  const left = String(previous || '').trim();
+  const right = String(next || '').trim();
+  if (!left) return right;
+  if (!right) return left;
+
+  const leftEndsWithCjk = /[\u3400-\u9fff]$/.test(left);
+  const rightStartsWithCjk = /^[\u3400-\u9fff]/.test(right);
+  if (leftEndsWithCjk || rightStartsWithCjk) return `${left}${right}`;
+  return `${left} ${right}`;
+}
+
+function isLikelyHallucinatedShortSegment(text = '') {
+  const cleaned = String(text || '').trim();
+  if (!cleaned) return true;
+  if (SHORT_SEGMENT_ALLOWLIST.has(cleaned)) return false;
+
+  const compact = cleaned.replace(/\s+/g, '');
+  if (compact.length <= 1) return true;
+
+  const hasStrongPunctuation = /[?？!！。,.，]/.test(cleaned);
+  if (hasStrongPunctuation) return false;
+
+  const hasCjk = /[\u3400-\u9fff]/.test(cleaned);
+  if (hasCjk && compact.length <= 2) return true;
+
+  const latinWords = cleaned.match(/[A-Za-z]+/g) || [];
+  if (!hasCjk && latinWords.length <= 1 && compact.length <= 3) return true;
+
+  return false;
+}
 
 export function useTranscript({
   enabled = false,
@@ -174,13 +208,21 @@ export function useTranscript({
     };
 
     recognition.onresult = (event) => {
-      let finalDelta = '';
+      const finalCandidates = [];
 
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
-        const text = result?.[0]?.transcript || '';
+        const alt = result?.[0];
+        const text = alt?.transcript || '';
+        const confidence = Number(alt?.confidence);
+        const isLowConfidenceFinal = (
+          result.isFinal
+          && Number.isFinite(confidence)
+          && confidence > 0
+          && confidence < MIN_FINAL_CONFIDENCE
+        );
         if (result.isFinal) {
-          if (text) finalDelta += text;
+          if (text && !isLowConfidenceFinal) finalCandidates.push(text);
           interimCacheRef.current.delete(i);
         } else if (text) {
           interimCacheRef.current.set(i, text);
@@ -194,20 +236,24 @@ export function useTranscript({
         sessionInterim += text;
       }
 
-        if (finalDelta) {
-          sessionFinalRef.current += finalDelta;
-          lastFinalAtRef.current = Date.now();
-          const cleaned = sanitizeTranscriptSegment(finalDelta);
-          if (cleaned) {
-            onFinalSegmentRef.current?.({
-              text: cleaned,
-              language: activeLanguageRef.current,
-              timestamp: Date.now(),
-              sourceMode: 'mic',
-              speaker: speakerFromSourceMode('mic'),
-            });
-          }
-        }
+      let acceptedFinalDelta = '';
+      for (const candidate of finalCandidates) {
+        const cleaned = sanitizeTranscriptSegment(candidate);
+        if (!cleaned || isLikelyHallucinatedShortSegment(cleaned)) continue;
+        acceptedFinalDelta = appendRecognizedText(acceptedFinalDelta, cleaned);
+        onFinalSegmentRef.current?.({
+          text: cleaned,
+          language: activeLanguageRef.current,
+          timestamp: Date.now(),
+          sourceMode: 'mic',
+          speaker: speakerFromSourceMode('mic'),
+        });
+      }
+
+      if (acceptedFinalDelta) {
+        sessionFinalRef.current = appendRecognizedText(sessionFinalRef.current, acceptedFinalDelta);
+        lastFinalAtRef.current = Date.now();
+      }
 
       const current = committedRef.current + sessionFinalRef.current + sessionInterim;
       if (current === lastTranscriptRef.current) return;

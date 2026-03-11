@@ -118,6 +118,15 @@ describe('sanitizeTranscriptSegment', () => {
   it('returns empty when text is only a watermark', () => {
     expect(sanitizeTranscriptSegment('字幕 by 索兰娅')).toBe('');
   });
+
+  it('filters common video outro noise', () => {
+    expect(sanitizeTranscriptSegment('感谢观看')).toBe('');
+    expect(sanitizeTranscriptSegment('别忘了订阅')).toBe('');
+  });
+
+  it('keeps normal interview text', () => {
+    expect(sanitizeTranscriptSegment('面试官你好')).toBe('面试官你好');
+  });
 });
 
 describe('speakerFromSourceMode', () => {

@@ -102,7 +102,7 @@ LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8765/transcribe
 
 You can also run `local-whisper-service/start_local_whisper.bat` on Windows.
 
-In Electron runtime, when `audioInputMode=Mic + System` and `Transcription Provider` is `Auto` or `Local`, the app now attempts to auto-start local-whisper service and auto-release it when you stop listening.
+In Electron runtime, when `audioInputMode=Mic + System` and `Transcription Provider` is `Local`, the app attempts to auto-start local-whisper service and auto-release it when you stop listening.
 If needed, you can point Electron's health check to a different local port with `LOCAL_WHISPER_HEALTH_URL` (desktop app process env).
 For release installers, run `cd desktop && npm run prepare:local-whisper-runtime` before `build:win*` to embed Python runtime + deps + model into the package.
 
@@ -137,7 +137,7 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 | Field | Description |
 |---|---|
 | AI Provider | `OpenAI` or `Google Gemini` |
-| Transcription Provider | `Auto` (OpenAI -> Local -> Gemini), `OpenAI`, `Gemini`, or `Local Whisper Service` |
+| Transcription Provider | `Auto` (System: Windows Live Captions -> OpenAI -> Local -> Gemini), `Windows Live Captions (System only)`, `OpenAI`, `Gemini`, or `Local Whisper Service` |
 | Topic | Interview category (Software Engineering, Behavioral, etc.) |
 | Interview Language | One or more interviewer languages (auto-cycled when multiple are selected) |
 | Answer Language | Language for AI-generated answers |
@@ -342,7 +342,9 @@ Subtitle-plugin evolution plan:
 - `Mic only` mode already uses browser-native Web Speech API (Chrome/Edge runtime speech engine), no cloud STT required.
 
 **Mic + System has no transcript output**
-- In `Interview Setup`, set **Transcription Provider** to `Auto` (`OpenAI -> Local -> Gemini`) or `OpenAI` for stable real-time chunks.
+- In `Interview Setup`, for `Mic + System`, prefer **Transcription Provider = Windows Live Captions** (Win11) or `Auto` (System: `Windows Live Captions -> OpenAI -> Local -> Gemini`).
+- If using `Windows Live Captions`, press `Win + Ctrl + L` first, complete language model download, and keep Live Captions enabled.
+- In Windows Live Captions settings, ensure the spoken source language is set correctly; otherwise recognition quality drops sharply.
 - Gemini chunk transcription is "best effort" and can return empty segments on short windows; this is not as reliable as Whisper-style STT.
 - If using `OpenAI` transcription, set `OPENAI_API_KEY` in `server/.env`.
 - If you intentionally use `Gemini` transcription, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).

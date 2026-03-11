@@ -63,6 +63,8 @@ export default function StandardMode({ onBack }) {
   const transcriptScrollRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
   const lastAutoAnswerRef = useRef(null);
+  const micLiveTranscriptRef = useRef('');
+  const systemLiveTranscriptRef = useRef('');
   // Track the in-flight question so we can save user+assistant pair when generation completes
   const pendingQuestionRef = useRef(null);
   const prevIsLoadingRef = useRef(false);
@@ -152,6 +154,30 @@ export default function StandardMode({ onBack }) {
     : [setup.interviewLang || 'en-US'];
   const audioInputMode = session.audioInputMode || 'mic';
 
+  const pushCombinedTranscriptForDetection = useCallback(() => {
+    const combined = [micLiveTranscriptRef.current, systemLiveTranscriptRef.current]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    handleTranscriptUpdate(combined);
+  }, [handleTranscriptUpdate]);
+
+  const handleMicTranscriptUpdate = useCallback((text) => {
+    micLiveTranscriptRef.current = String(text || '');
+    if (audioInputMode === 'mic-system') {
+      pushCombinedTranscriptForDetection();
+      return;
+    }
+    handleTranscriptUpdate(text);
+  }, [audioInputMode, handleTranscriptUpdate, pushCombinedTranscriptForDetection]);
+
+  const handleSystemTranscriptUpdate = useCallback((text) => {
+    systemLiveTranscriptRef.current = String(text || '');
+    if (audioInputMode === 'mic-system') {
+      pushCombinedTranscriptForDetection();
+    }
+  }, [audioInputMode, pushCombinedTranscriptForDetection]);
+
   const handleFinalSegment = useCallback(({
     text,
     language: segmentLanguage,
@@ -189,9 +215,9 @@ export default function StandardMode({ onBack }) {
   }, []);
 
   const webSpeechTranscript = useTranscript({
-    enabled: isRunning && audioInputMode === 'mic',
+    enabled: isRunning && (audioInputMode === 'mic' || audioInputMode === 'mic-system'),
     language: interviewLangs,
-    onTranscriptChange: handleTranscriptUpdate,
+    onTranscriptChange: handleMicTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
     rotationIntervalMs: 8000,
   });
@@ -201,22 +227,34 @@ export default function StandardMode({ onBack }) {
     language: interviewLangs,
     provider: setup.aiProvider,
     transcribeProvider: setup.sttProvider,
-    onTranscriptChange: handleTranscriptUpdate,
+    captureMic: false,
+    captureSystem: true,
+    onTranscriptChange: handleSystemTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
   });
 
   const transcript = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.transcript
+    ? [webSpeechTranscript.transcript, dualAudioTranscript.transcript]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .join('\n')
     : webSpeechTranscript.transcript;
   const isListening = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.isListening
+    ? (webSpeechTranscript.isListening || dualAudioTranscript.isListening)
     : webSpeechTranscript.isListening;
   const transcriptError = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.error
+    ? [webSpeechTranscript.error, dualAudioTranscript.error].filter(Boolean).join(' | ')
     : webSpeechTranscript.error;
   const activeLanguage = audioInputMode === 'mic-system'
-    ? dualAudioTranscript.activeLanguage
+    ? webSpeechTranscript.activeLanguage
     : webSpeechTranscript.activeLanguage;
+  const normalizedSttProvider = String(setup.sttProvider || 'auto').trim().toLowerCase();
+  const systemSttLabel = normalizedSttProvider === 'auto'
+    ? 'openai -> local -> gemini -> windows-live-captions'
+    : normalizedSttProvider;
+  const sttDisplayLabel = audioInputMode === 'mic-system'
+    ? `Mic=webspeech | System=${systemSttLabel}`
+    : 'Mic=webspeech';
 
   const handleCustomSubmit = (e) => {
     e.preventDefault();
@@ -242,6 +280,8 @@ export default function StandardMode({ onBack }) {
       setIsRunning(false);
       cancelGeneration();
       pendingQuestionRef.current = null;
+      micLiveTranscriptRef.current = '';
+      systemLiveTranscriptRef.current = '';
     } else {
       setIsRunning(true);
       clearAnswer();
@@ -249,6 +289,8 @@ export default function StandardMode({ onBack }) {
       dualAudioTranscript.clearTranscript();
       setTranscriptEntries([]);
       lastAutoAnswerRef.current = null;
+      micLiveTranscriptRef.current = '';
+      systemLiveTranscriptRef.current = '';
     }
   };
 
@@ -343,6 +385,8 @@ export default function StandardMode({ onBack }) {
               clearAnswer();
               webSpeechTranscript.clearTranscript();
               dualAudioTranscript.clearTranscript();
+              micLiveTranscriptRef.current = '';
+              systemLiveTranscriptRef.current = '';
               setLastQuestion('');
               setTranscriptEntries([]);
             }}
@@ -367,7 +411,7 @@ export default function StandardMode({ onBack }) {
             <span className="box-label">🎤 Transcript</span>
             <span className="transcript-lang-badge">
               Source: {audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic only'} |{' '}
-              STT: {setup.sttProvider || 'auto'} |{' '}
+              STT: {sttDisplayLabel} |{' '}
               Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
               {audioInputMode === 'mic' && interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
             </span>

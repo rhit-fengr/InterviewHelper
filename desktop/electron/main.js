@@ -907,6 +907,23 @@ ipcMain.handle('open-external', (_event, url) => {
   shell.openExternal(url);
 });
 
+ipcMain.handle('read-e2e-audio-file', async (_event, filePath) => {
+  try {
+    const resolvedPath = path.resolve(String(filePath || ''));
+    const buffer = await fs.promises.readFile(resolvedPath);
+    return {
+      ok: true,
+      base64: buffer.toString('base64'),
+      filePath: resolvedPath,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || 'Failed to read E2E audio file.',
+    };
+  }
+});
+
 ipcMain.handle('ensure-local-whisper', async () => ensureLocalWhisper());
 
 ipcMain.handle('release-local-whisper', async () => releaseLocalWhisper());

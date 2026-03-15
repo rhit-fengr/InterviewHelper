@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const outputDir = path.resolve(__dirname, '../test-assets/audio');
 const manifestPath = path.join(outputDir, 'manifest.json');
@@ -8,49 +9,127 @@ const FIXTURES = [
   {
     id: 'system-question-stereo',
     fileName: 'system-question-stereo.wav',
-    durationMs: 1800,
+    text: 'Tell me about your biggest strength?',
     channelCount: 2,
-    frequencies: [440, 554],
-    description: 'Deterministic stereo system-audio question fixture.',
+    gain: 1,
+    description: 'Stereo system-audio interview question spoken with built-in TTS.',
   },
   {
     id: 'mic-leakage-mono',
     fileName: 'mic-leakage-mono.wav',
-    durationMs: 900,
+    text: 'Tell me about your biggest strength?',
     channelCount: 1,
-    frequencies: [660],
+    gain: 0.42,
     description: 'Mono microphone leakage fixture used to verify cross-source dedupe.',
   },
   {
     id: 'mic-answer-mono',
     fileName: 'mic-answer-mono.wav',
-    durationMs: 1600,
+    text: 'My biggest strength is staying calm under pressure and creating clarity for the team.',
     channelCount: 1,
-    frequencies: [330],
-    description: 'Mono microphone answer fixture.',
+    gain: 1,
+    description: 'Mono microphone answer fixture spoken with built-in TTS.',
   },
   {
     id: 'system-followup-stereo',
     fileName: 'system-followup-stereo.wav',
-    durationMs: 1200,
+    text: 'How do you handle ambiguity on a fast-moving team?',
     channelCount: 2,
-    frequencies: [392, 494],
-    description: 'Deterministic stereo system-audio follow-up fixture.',
+    gain: 1,
+    description: 'Stereo system-audio follow-up question spoken with built-in TTS.',
   },
 ];
 
-function writeWavFile(filePath, {
-  durationMs,
+function runPowerShell(command) {
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    command,
+  ], {
+    stdio: 'inherit',
+  });
+
+  if (result.status !== 0) {
+    throw new Error(`PowerShell command failed with exit code ${result.status}`);
+  }
+}
+
+function toPowerShellLiteral(value) {
+  return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function synthesizeSpeechToWave(outputPath, text) {
+  const command = [
+    'Add-Type -AssemblyName System.Speech',
+    `$path = ${toPowerShellLiteral(outputPath)}`,
+    `$text = ${toPowerShellLiteral(text)}`,
+    '$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    '$synth.Rate = 0',
+    '$synth.Volume = 100',
+    '$synth.SetOutputToWaveFile($path)',
+    '$synth.Speak($text)',
+    '$synth.SetOutputToDefaultAudioDevice()',
+    '$synth.Dispose()',
+  ].join('; ');
+  runPowerShell(command);
+}
+
+function parsePcmWave(buffer) {
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('Unsupported WAV file format.');
+  }
+
+  let offset = 12;
+  let fmt = null;
+  let dataOffset = -1;
+  let dataSize = 0;
+
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString('ascii', offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkDataOffset = offset + 8;
+
+    if (chunkId === 'fmt ') {
+      fmt = {
+        audioFormat: buffer.readUInt16LE(chunkDataOffset),
+        channelCount: buffer.readUInt16LE(chunkDataOffset + 2),
+        sampleRate: buffer.readUInt32LE(chunkDataOffset + 4),
+        bitsPerSample: buffer.readUInt16LE(chunkDataOffset + 14),
+      };
+    }
+
+    if (chunkId === 'data') {
+      dataOffset = chunkDataOffset;
+      dataSize = chunkSize;
+      break;
+    }
+
+    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+  }
+
+  if (!fmt || dataOffset < 0) {
+    throw new Error('WAV file is missing fmt or data chunk.');
+  }
+
+  return {
+    fmt,
+    data: buffer.slice(dataOffset, dataOffset + dataSize),
+  };
+}
+
+function writePcmWave({
+  filePath,
+  pcmData,
   channelCount,
-  frequencies,
-  sampleRate = 16000,
-  amplitude = 0.22,
+  sampleRate,
+  bitsPerSample,
 }) {
-  const sampleCount = Math.max(1, Math.round(sampleRate * (durationMs / 1000)));
-  const bytesPerSample = 2;
+  const bytesPerSample = bitsPerSample / 8;
   const blockAlign = channelCount * bytesPerSample;
   const byteRate = sampleRate * blockAlign;
-  const dataSize = sampleCount * blockAlign;
+  const dataSize = pcmData.length;
   const buffer = Buffer.alloc(44 + dataSize);
 
   let offset = 0;
@@ -64,23 +143,47 @@ function writeWavFile(filePath, {
   buffer.writeUInt32LE(sampleRate, offset); offset += 4;
   buffer.writeUInt32LE(byteRate, offset); offset += 4;
   buffer.writeUInt16LE(blockAlign, offset); offset += 2;
-  buffer.writeUInt16LE(bytesPerSample * 8, offset); offset += 2;
+  buffer.writeUInt16LE(bitsPerSample, offset); offset += 2;
   buffer.write('data', offset); offset += 4;
   buffer.writeUInt32LE(dataSize, offset); offset += 4;
+  pcmData.copy(buffer, offset);
 
-  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
-    const t = sampleIndex / sampleRate;
+  fs.writeFileSync(filePath, buffer);
+}
+
+function applyGainAndChannels(sourceBuffer, targetChannelCount, gain = 1) {
+  const parsed = parsePcmWave(sourceBuffer);
+  const { channelCount, sampleRate, bitsPerSample, audioFormat } = parsed.fmt;
+  if (audioFormat !== 1 || bitsPerSample !== 16) {
+    throw new Error('Only PCM 16-bit WAV files are supported for fixture post-processing.');
+  }
+
+  const bytesPerSample = bitsPerSample / 8;
+  const frameCount = parsed.data.length / (channelCount * bytesPerSample);
+  const output = Buffer.alloc(frameCount * targetChannelCount * bytesPerSample);
+
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+    const samples = [];
     for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
-      const frequency = frequencies[channelIndex % frequencies.length];
-      const envelope = Math.sin(Math.PI * Math.min(1, sampleIndex / (sampleRate * 0.08)));
-      const raw = Math.sin(2 * Math.PI * frequency * t) * amplitude * envelope;
-      const int16 = Math.max(-1, Math.min(1, raw)) * 32767;
-      buffer.writeInt16LE(Math.round(int16), offset);
-      offset += 2;
+      const sampleOffset = (frameIndex * channelCount + channelIndex) * bytesPerSample;
+      samples.push(parsed.data.readInt16LE(sampleOffset));
+    }
+
+    for (let channelIndex = 0; channelIndex < targetChannelCount; channelIndex += 1) {
+      const sourceSample = samples[Math.min(channelIndex, samples.length - 1)] || samples[0] || 0;
+      const amplified = Math.max(-32768, Math.min(32767, Math.round(sourceSample * gain)));
+      const outputOffset = (frameIndex * targetChannelCount + channelIndex) * bytesPerSample;
+      output.writeInt16LE(amplified, outputOffset);
     }
   }
 
-  fs.writeFileSync(filePath, buffer);
+  return {
+    pcmData: output,
+    channelCount: targetChannelCount,
+    sampleRate,
+    bitsPerSample,
+    durationMs: Math.round((frameCount / sampleRate) * 1000),
+  };
 }
 
 function main() {
@@ -88,10 +191,24 @@ function main() {
 
   const manifest = FIXTURES.map((fixture) => {
     const filePath = path.join(outputDir, fixture.fileName);
-    writeWavFile(filePath, fixture);
+    const tempMonoPath = path.join(outputDir, `${fixture.id}.mono.tmp.wav`);
+    synthesizeSpeechToWave(tempMonoPath, fixture.text);
+
+    const processed = applyGainAndChannels(
+      fs.readFileSync(tempMonoPath),
+      fixture.channelCount,
+      fixture.gain,
+    );
+    writePcmWave({
+      filePath,
+      ...processed,
+    });
+    fs.rmSync(tempMonoPath, { force: true });
+
     return {
       ...fixture,
       filePath,
+      durationMs: processed.durationMs,
     };
   });
 

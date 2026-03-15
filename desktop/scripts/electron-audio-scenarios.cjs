@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 const { _electron: electron } = require('playwright');
 
 const desktopDir = path.resolve(__dirname, '..');
@@ -41,7 +42,10 @@ function buildScenario(fixtures) {
   const fixtureById = Object.fromEntries(fixtures.map((fixture) => [fixture.id, fixture]));
   return {
     name: 'dual-source-overlap',
-    fixtures,
+    fixtures: fixtures.map((fixture) => ({
+      ...fixture,
+      fileUrl: pathToFileURL(fixture.filePath).href,
+    })),
     capture: {
       system: {
         emissions: [

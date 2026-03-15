@@ -15,7 +15,9 @@
   - AI 流式回答渲染（通过 mock server response）
   - Conversation History 的 `Collapse / Hide / Show`
   - Mic + System 双来源场景
+  - 带真实语音内容的固定 WAV 素材
   - 固定音频素材的时间编排、重叠播放和跨来源去重
+  - 通过虚拟媒体流驱动原生 `MediaRecorder` 录制链路
   - 自动问题检测与自动回答在双来源模式下的主链路
 - 当前仍建议保留人工验收：
   - 真实麦克风输入、系统音频捕获、Windows Live Captions 联动

@@ -32,6 +32,7 @@ function normalizeConfig(config) {
   const capture = config?.capture || {};
   return {
     name: String(config?.name || 'unnamed-e2e-scenario'),
+    fixtures: Array.isArray(config?.fixtures) ? config.fixtures : [],
     capture: {
       mic: {
         emissions: Array.isArray(capture.mic?.emissions) ? capture.mic.emissions : [],
@@ -47,65 +48,165 @@ function normalizeConfig(config) {
   };
 }
 
-function createFakeTrack(kind, sourceMode) {
+function decodeBase64ToArrayBuffer(base64 = '') {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+function createCanvasStream(label = 'system') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const context = canvas.getContext('2d');
+  let tick = 0;
+  const timer = setInterval(() => {
+    tick += 1;
+    context.fillStyle = '#0f172a';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#38bdf8';
+    context.font = '24px Segoe UI';
+    context.fillText(`E2E ${label}`, 24, 48);
+    context.fillStyle = '#94a3b8';
+    context.font = '18px Segoe UI';
+    context.fillText(`frame ${tick}`, 24, 88);
+  }, 100);
+  const stream = canvas.captureStream(10);
+  stream.__e2eCleanup = () => clearInterval(timer);
+  return stream;
+}
+
+function tagTrackSource(track, sourceMode) {
+  if (track) {
+    track.__e2eSourceMode = sourceMode;
+  }
+  return track;
+}
+
+function attachStreamCleanup(stream, cleanup) {
+  let cleaned = false;
+  const runCleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    cleanup();
+  };
+
+  for (const track of stream.getTracks()) {
+    const originalStop = typeof track.stop === 'function' ? track.stop.bind(track) : null;
+    track.stop = () => {
+      originalStop?.();
+      runCleanup();
+    };
+  }
+
+  stream.__e2eCleanup = runCleanup;
+}
+
+function createScenarioRuntime(config) {
+  const fixturesById = Object.fromEntries((config.fixtures || []).map((fixture) => [fixture.id, fixture]));
+  const transcriptQueues = {
+    mic: [],
+    system: [],
+  };
+
   return {
-    kind,
-    enabled: true,
-    label: `e2e-${sourceMode}-${kind}`,
-    __e2eSourceMode: sourceMode,
-    muted: false,
-    readyState: 'live',
-    stop() {
-      this.readyState = 'ended';
-      if (typeof this.onended === 'function') {
-        this.onended();
-      }
+    fixturesById,
+    dequeueTranscript(sourceMode) {
+      const queue = transcriptQueues[sourceMode] || [];
+      return queue.length > 0 ? queue.shift() : null;
     },
-    addEventListener() {},
-    removeEventListener() {},
-    onended: null,
+    enqueueTranscript(sourceMode, payload) {
+      const queue = transcriptQueues[sourceMode] || [];
+      queue.push(payload);
+      transcriptQueues[sourceMode] = queue;
+    },
   };
 }
 
-class FakeMediaStream {
-  constructor(tracks = [], sourceMode = null) {
-    const providedTracks = Array.isArray(tracks) ? tracks.filter(Boolean) : [];
-    const inferredSourceMode = sourceMode || providedTracks[0]?.__e2eSourceMode || 'mic';
+async function createPlaybackStream(sourceMode, emissions, runtime) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    throw new Error('AudioContext is not available in this environment.');
+  }
 
-    if (providedTracks.length > 0) {
-      this._tracks = providedTracks;
-    } else {
-      const audioTrack = createFakeTrack('audio', inferredSourceMode);
-      const videoTrack = inferredSourceMode === 'system' ? createFakeTrack('video', inferredSourceMode) : null;
-      this._tracks = [audioTrack, videoTrack].filter(Boolean);
+  const audioContext = new AudioContextClass();
+  await audioContext.resume();
+  const destination = audioContext.createMediaStreamDestination();
+  const cleanupTimers = [];
+  const startAt = audioContext.currentTime + 0.25;
+
+  for (const emission of emissions) {
+    const fixture = runtime.fixturesById[emission.fixtureId];
+    if (!fixture?.filePath) continue;
+
+    const fileResult = await window.electronE2E.readAudioFixture(fixture.filePath);
+    if (!fileResult?.ok || !fileResult.base64) {
+      throw new Error(fileResult?.error || `Unable to read audio fixture: ${fixture.filePath}`);
     }
 
-    this.__e2eSourceMode = inferredSourceMode;
+    const arrayBuffer = decodeBase64ToArrayBuffer(fileResult.base64);
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    const sourceNode = audioContext.createBufferSource();
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = Math.max(0, Number(emission.gain ?? fixture.gain ?? 1) || 1);
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(gainNode);
+    gainNode.connect(destination);
+    sourceNode.start(startAt + (Math.max(0, Number(emission.atMs) || 0) / 1000));
+
+    const timer = setTimeout(() => {
+      runtime.enqueueTranscript(sourceMode, {
+        text: String(emission.text || fixture.text || ''),
+        delayMs: Number(emission.delayMs) || 0,
+        fixtureId: emission.fixtureId,
+      });
+    }, Math.max(0, Number(emission.atMs) || 0) + 120);
+    cleanupTimers.push(timer);
   }
 
-  getTracks() {
-    return [...this._tracks];
+  let stream;
+  let canvasStream = null;
+  if (sourceMode === 'system') {
+    canvasStream = createCanvasStream(sourceMode);
+    stream = new window.MediaStream([
+      ...destination.stream.getAudioTracks().map((track) => tagTrackSource(track, sourceMode)),
+      ...canvasStream.getVideoTracks().map((track) => tagTrackSource(track, sourceMode)),
+    ]);
+  } else {
+    stream = new window.MediaStream(
+      destination.stream.getAudioTracks().map((track) => tagTrackSource(track, sourceMode))
+    );
   }
 
-  getAudioTracks() {
-    return this._tracks.filter((track) => track.kind === 'audio');
-  }
+  stream.__e2eSourceMode = sourceMode;
+  attachStreamCleanup(stream, () => {
+    cleanupTimers.forEach((timer) => clearTimeout(timer));
+    canvasStream?.__e2eCleanup?.();
+    try {
+      audioContext.close();
+    } catch {
+      // ignore close failures
+    }
+  });
 
-  getVideoTracks() {
-    return this._tracks.filter((track) => track.kind === 'video');
-  }
+  return stream;
 }
 
 function installMediaDevicesHarness(config) {
-  window.MediaStream = FakeMediaStream;
+  const runtime = createScenarioRuntime(config);
+  window.__INTERVIEW_HELPER_E2E_RUNTIME__ = runtime;
+
   const currentMediaDevices = navigator.mediaDevices || {};
   const mediaDevices = {
     ...currentMediaDevices,
     async getUserMedia() {
-      return new FakeMediaStream([], 'mic');
+      return createPlaybackStream('mic', config.capture.mic.emissions || [], runtime);
     },
     async getDisplayMedia() {
-      return new FakeMediaStream([], 'system');
+      return createPlaybackStream('system', config.capture.system.emissions || [], runtime);
     },
   };
 
@@ -113,63 +214,6 @@ function installMediaDevicesHarness(config) {
     configurable: true,
     value: mediaDevices,
   });
-
-  class FakeMediaRecorder {
-    static isTypeSupported() {
-      return true;
-    }
-
-    constructor(stream) {
-      this.stream = stream;
-      this.state = 'inactive';
-      this.mimeType = 'application/json';
-      this.ondataavailable = null;
-      this.onerror = null;
-      this.onstart = null;
-      this.onstop = null;
-      this._sourceMode = String(stream?.__e2eSourceMode || 'mic');
-      this._timers = [];
-      this._emissionCursor = 0;
-    }
-
-    start() {
-      if (this.state !== 'inactive') return;
-      this.state = 'recording';
-      this.onstart?.();
-
-      const emissions = config.capture[this._sourceMode]?.emissions || [];
-      emissions.forEach((emission, index) => {
-        const timer = setTimeout(() => {
-          if (this.state !== 'recording') return;
-          this._emissionCursor = Math.max(this._emissionCursor, index + 1);
-          const payload = JSON.stringify({
-            ...emission,
-            sourceMode: this._sourceMode,
-            emissionIndex: index,
-            padding: 'x'.repeat(1400),
-          });
-          this.ondataavailable?.({
-            data: new Blob([payload], { type: 'application/json' }),
-          });
-        }, Math.max(0, Number(emission.atMs) || 0));
-        this._timers.push(timer);
-      });
-    }
-
-    requestData() {
-      return undefined;
-    }
-
-    stop() {
-      if (this.state === 'inactive') return;
-      this.state = 'inactive';
-      this._timers.forEach((timer) => clearTimeout(timer));
-      this._timers = [];
-      this.onstop?.();
-    }
-  }
-
-  window.MediaRecorder = FakeMediaRecorder;
 }
 
 function findDetectedQuestion(config, transcript = '') {
@@ -192,21 +236,14 @@ function installFetchHarness(config) {
     if (url.includes('/api/ai/transcribe-chunk')) {
       const formData = init?.body;
       const sourceMode = String(formData?.get?.('sourceMode') || 'unknown').trim().toLowerCase();
-      const audioBlob = formData?.get?.('audio');
-      let emission = {};
+      const emission = window.__INTERVIEW_HELPER_E2E_RUNTIME__?.dequeueTranscript(sourceMode);
 
-      try {
-        emission = JSON.parse(await audioBlob.text());
-      } catch {
-        emission = {};
-      }
-
-      if (emission.delayMs) {
+      if (emission?.delayMs) {
         await delay(emission.delayMs);
       }
 
       return jsonResponse({
-        text: String(emission.text || ''),
+        text: String(emission?.text || ''),
         sourceMode,
         providerUsed: 'mock-e2e',
       });

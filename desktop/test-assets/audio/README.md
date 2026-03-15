@@ -1,6 +1,6 @@
 # Audio Test Fixtures
 
-This folder stores deterministic audio fixtures used by the Electron E2E harness.
+This folder stores deterministic spoken audio fixtures used by the Electron E2E harness.
 
 ## Commands
 
@@ -20,6 +20,7 @@ npm run test:generate-audio-fixtures
 ## Why these fixtures exist
 
 - Keep audio automation fully repeatable across machines.
+- Use actual spoken phrases instead of synthetic tones, so fixtures better match real interview audio cadence.
 - Model separate mic vs system sources.
 - Model mono vs stereo channel layouts.
 - Provide stable source material IDs that future virtual-microphone tests can reuse.
@@ -27,6 +28,8 @@ npm run test:generate-audio-fixtures
 ## Current usage
 
 - `npm run test:audio-scenarios` uses the manifest plus a virtual capture harness.
+- The harness plays real spoken `.wav` fixtures through `AudioContext` and `MediaStreamDestination`.
+- The app records those streams with the native `MediaRecorder` path.
 - Network calls for transcription and answering are mocked for stability.
 - The app still exercises its own transcript merge, source labeling, question detection trigger, and answer rendering paths.
 

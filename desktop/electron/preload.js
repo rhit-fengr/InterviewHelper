@@ -44,4 +44,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 contextBridge.exposeInMainWorld('electronE2E', {
   config: e2eScenarioConfig,
+  readAudioFixture: (filePath) => ipcRenderer.invoke('read-e2e-audio-file', filePath),
 });

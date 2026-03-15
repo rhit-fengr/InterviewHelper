@@ -4,48 +4,46 @@
     {
       "id": "system-question-stereo",
       "fileName": "system-question-stereo.wav",
-      "durationMs": 1800,
+      "text": "Tell me about your biggest strength?",
       "channelCount": 2,
-      "frequencies": [
-        440,
-        554
-      ],
-      "description": "Deterministic stereo system-audio question fixture.",
-      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\system-question-stereo.wav"
+      "gain": 1,
+      "description": "Stereo system-audio interview question spoken with built-in TTS.",
+      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\system-question-stereo.wav",
+      "durationMs": 2709,
+      "fileUrl": "file:///D:/Github/InterviewHelper/desktop/test-assets/audio/system-question-stereo.wav"
     },
     {
       "id": "mic-leakage-mono",
       "fileName": "mic-leakage-mono.wav",
-      "durationMs": 900,
+      "text": "Tell me about your biggest strength?",
       "channelCount": 1,
-      "frequencies": [
-        660
-      ],
+      "gain": 0.42,
       "description": "Mono microphone leakage fixture used to verify cross-source dedupe.",
-      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\mic-leakage-mono.wav"
+      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\mic-leakage-mono.wav",
+      "durationMs": 2709,
+      "fileUrl": "file:///D:/Github/InterviewHelper/desktop/test-assets/audio/mic-leakage-mono.wav"
     },
     {
       "id": "mic-answer-mono",
       "fileName": "mic-answer-mono.wav",
-      "durationMs": 1600,
+      "text": "My biggest strength is staying calm under pressure and creating clarity for the team.",
       "channelCount": 1,
-      "frequencies": [
-        330
-      ],
-      "description": "Mono microphone answer fixture.",
-      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\mic-answer-mono.wav"
+      "gain": 1,
+      "description": "Mono microphone answer fixture spoken with built-in TTS.",
+      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\mic-answer-mono.wav",
+      "durationMs": 5243,
+      "fileUrl": "file:///D:/Github/InterviewHelper/desktop/test-assets/audio/mic-answer-mono.wav"
     },
     {
       "id": "system-followup-stereo",
       "fileName": "system-followup-stereo.wav",
-      "durationMs": 1200,
+      "text": "How do you handle ambiguity on a fast-moving team?",
       "channelCount": 2,
-      "frequencies": [
-        392,
-        494
-      ],
-      "description": "Deterministic stereo system-audio follow-up fixture.",
-      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\system-followup-stereo.wav"
+      "gain": 1,
+      "description": "Stereo system-audio follow-up question spoken with built-in TTS.",
+      "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\system-followup-stereo.wav",
+      "durationMs": 3719,
+      "fileUrl": "file:///D:/Github/InterviewHelper/desktop/test-assets/audio/system-followup-stereo.wav"
     }
   ],
   "capture": {

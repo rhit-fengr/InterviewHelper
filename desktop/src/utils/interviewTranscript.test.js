@@ -124,8 +124,25 @@ describe('sanitizeTranscriptSegment', () => {
     expect(sanitizeTranscriptSegment('别忘了订阅')).toBe('');
   });
 
+  it('filters browser chrome noise text', () => {
+    expect(sanitizeTranscriptSegment('Address and search bar')).toBe('');
+    expect(sanitizeTranscriptSegment('search or type url')).toBe('');
+    expect(sanitizeTranscriptSegment('地址和搜索栏')).toBe('');
+    expect(sanitizeTranscriptSegment('Ready to show live captions in Chinese (Simplified, Mainland China)')).toBe('');
+    expect(sanitizeTranscriptSegment('LiveCaptions-Translator/src/utils at master · SakiRinn/LiveCaptions-Translator')).toBe('');
+    expect(sanitizeTranscriptSegment('Change language')).toBe('');
+    expect(sanitizeTranscriptSegment('Include microphone audio')).toBe('');
+    expect(sanitizeTranscriptSegment('Change language Include microphone audio')).toBe('');
+  });
+
   it('keeps normal interview text', () => {
     expect(sanitizeTranscriptSegment('面试官你好')).toBe('面试官你好');
+  });
+
+  it('collapses long repeated fragments', () => {
+    expect(
+      sanitizeTranscriptSegment('因为我觉得我们课程很便宜因为我觉得我们课程很便宜'),
+    ).toBe('因为我觉得我们课程很便宜');
   });
 });
 

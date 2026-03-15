@@ -29,12 +29,60 @@ const TRANSCRIPT_NOISE_PATTERNS = [
   /字幕製作人(?:\s*[：:])?\s*[A-Za-z0-9_.\-\u4e00-\u9fa5]{1,24}(?:\s+[A-Za-z][A-Za-z0-9_.\-]{0,23})?/gi,
   /caption(?:s)?\s*by\s*[A-Za-z0-9_.\-]{1,24}/gi,
   /字幕由[^\s,，。.!?？]{1,24}(?:提供|制作|製作)?/gi,
+  /livecaptions-translator\/[^\s]+/gi,
 ];
 const TRANSCRIPT_NOISE_ONLY_PATTERNS = [
   /^(感谢观看|謝謝觀看|谢谢观看|本视频到这里|本影片到這裡)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
   /^(点赞订阅|點讚訂閱|記得訂閱|记得订阅|别忘了订阅|別忘了訂閱|like and subscribe)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
+  /^(address and search bar|address bar|search bar|search or type url|地址和搜索栏|地址列|搜索栏)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
+  /^(ready to show live captions(?: in .*)?|.*\bat master\b.*livecaptions-translator.*)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
+  /^(change language|include microphone audio|change language include microphone audio)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
+  /^(更改语言|切换语言|包括麦克风音频|包含麦克风音频|包含麥克風音訊|包括麥克風音訊)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
   /^(字幕|caption|captions)(?:\s|$)/iu,
 ];
+const MIN_REPEAT_UNIT_CHARS = 8;
+const MAX_REPEAT_UNIT_CHARS = 120;
+const MAX_REPEAT_COLLAPSE_ROUNDS = 3;
+
+function collapseConsecutiveRepeatedSubstrings(text = '') {
+  let value = String(text || '');
+  if (!value) return '';
+
+  for (let round = 0; round < MAX_REPEAT_COLLAPSE_ROUNDS; round += 1) {
+    let replaced = false;
+    const textLength = value.length;
+    if (textLength < MIN_REPEAT_UNIT_CHARS * 2) break;
+
+    const maxUnit = Math.min(MAX_REPEAT_UNIT_CHARS, Math.floor(textLength / 2));
+    for (let unitLength = maxUnit; unitLength >= MIN_REPEAT_UNIT_CHARS; unitLength -= 1) {
+      for (let start = 0; start + unitLength * 2 <= value.length; start += 1) {
+        const unit = value.slice(start, start + unitLength);
+        if (!/[\p{L}\p{N}\u4e00-\u9fa5]/u.test(unit)) continue;
+
+        let repeats = 1;
+        while (
+          start + (repeats + 1) * unitLength <= value.length
+          && value.slice(
+            start + repeats * unitLength,
+            start + (repeats + 1) * unitLength,
+          ) === unit
+        ) {
+          repeats += 1;
+        }
+
+        if (repeats < 2) continue;
+        value = value.slice(0, start + unitLength) + value.slice(start + repeats * unitLength);
+        replaced = true;
+        break;
+      }
+      if (replaced) break;
+    }
+
+    if (!replaced) break;
+  }
+
+  return value;
+}
 
 export function sanitizeTranscriptSegment(text = '') {
   let cleaned = String(text || '').trim();
@@ -46,6 +94,9 @@ export function sanitizeTranscriptSegment(text = '') {
 
   cleaned = cleaned
     .replace(/^[\s:：\-|,.，。]+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  cleaned = collapseConsecutiveRepeatedSubstrings(cleaned)
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!cleaned) return '';

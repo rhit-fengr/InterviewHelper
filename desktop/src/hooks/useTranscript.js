@@ -25,8 +25,24 @@ const SPEECH_ERROR_MESSAGES = {
   'network': 'Network error during speech recognition. Please check your connection.',
   'service-not-allowed': 'Speech recognition service is not allowed. Please ensure you are using a supported browser (Chrome or Edge).',
 };
-const MIN_FINAL_CONFIDENCE = 0.18;
-const SHORT_SEGMENT_ALLOWLIST = new Set(['你好', '您好', '可以', '好的', '谢谢', '謝謝', '是的']);
+const MIN_FINAL_CONFIDENCE = 0.15;
+const INTERIM_STABLE_COMMIT_MS = 1_400;
+const MIN_INTERIM_COMMIT_CHARS = 2;
+const MAX_LANGUAGE_HOLD_MS = 2_600;
+const SHORT_SEGMENT_ALLOWLIST = new Set([
+  '你好',
+  '您好',
+  '可以',
+  '好的',
+  '谢谢',
+  '謝謝',
+  '是的',
+  '对的',
+  '没错',
+  '當然',
+  '当然',
+  '没问题',
+]);
 
 function appendRecognizedText(previous = '', next = '') {
   const left = String(previous || '').trim();
@@ -60,6 +76,12 @@ function isLikelyHallucinatedShortSegment(text = '') {
   return false;
 }
 
+function normalizeSegmentForCompare(text = '') {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\u4e00-\u9fa5]+/gu, '');
+}
+
 export function useTranscript({
   enabled = false,
   language = 'en-US',
@@ -88,6 +110,10 @@ export function useTranscript({
   const interimCacheRef = useRef(new Map());
   const languageIndexRef = useRef(0);
   const lastFinalAtRef = useRef(Date.now());
+  const lastEmittedFinalRef = useRef('');
+  const lastInterimNormalizedRef = useRef('');
+  const lastInterimChangedAtRef = useRef(0);
+  const languageSessionStartedAtRef = useRef(0);
   const rotationMonitorRef = useRef(null);
 
   useEffect(() => {
@@ -127,6 +153,9 @@ export function useTranscript({
         sessionFinalRef.current = '';
       }
       interimCacheRef.current.clear();
+      lastInterimNormalizedRef.current = '';
+      lastInterimChangedAtRef.current = 0;
+      languageSessionStartedAtRef.current = 0;
     };
 
     if (!enabled) {
@@ -169,20 +198,22 @@ export function useTranscript({
       rotationMonitorRef.current = setInterval(() => {
         if (!enabledRef.current || recognitionRef.current !== recognition) return;
         const elapsedSinceLastFinal = Date.now() - lastFinalAtRef.current;
-        if (elapsedSinceLastFinal >= rotationIntervalMs) {
+        const elapsedSinceLangStart = Date.now() - (languageSessionStartedAtRef.current || Date.now());
+        if (elapsedSinceLastFinal >= rotationIntervalMs || elapsedSinceLangStart >= MAX_LANGUAGE_HOLD_MS) {
           try {
             recognition.stop();
           } catch {
             // ignore
           }
         }
-      }, 1000);
+      }, 500);
     };
 
     recognition.onstart = () => {
       setIsListening(true);
       setError(null);
       lastFinalAtRef.current = Date.now();
+      languageSessionStartedAtRef.current = Date.now();
       startRotationMonitor();
     };
 
@@ -241,6 +272,14 @@ export function useTranscript({
         const cleaned = sanitizeTranscriptSegment(candidate);
         if (!cleaned || isLikelyHallucinatedShortSegment(cleaned)) continue;
         acceptedFinalDelta = appendRecognizedText(acceptedFinalDelta, cleaned);
+      }
+
+      const emitSegment = (rawText) => {
+        const cleaned = sanitizeTranscriptSegment(rawText);
+        if (!cleaned || isLikelyHallucinatedShortSegment(cleaned)) return false;
+        const normalizedDelta = normalizeSegmentForCompare(cleaned);
+        if (!normalizedDelta || normalizedDelta === lastEmittedFinalRef.current) return false;
+
         onFinalSegmentRef.current?.({
           text: cleaned,
           language: activeLanguageRef.current,
@@ -248,11 +287,34 @@ export function useTranscript({
           sourceMode: 'mic',
           speaker: speakerFromSourceMode('mic'),
         });
-      }
+        lastEmittedFinalRef.current = normalizedDelta;
+        sessionFinalRef.current = appendRecognizedText(sessionFinalRef.current, cleaned);
+        lastFinalAtRef.current = Date.now();
+        return true;
+      };
 
       if (acceptedFinalDelta) {
-        sessionFinalRef.current = appendRecognizedText(sessionFinalRef.current, acceptedFinalDelta);
-        lastFinalAtRef.current = Date.now();
+        emitSegment(acceptedFinalDelta);
+        lastInterimNormalizedRef.current = '';
+        lastInterimChangedAtRef.current = 0;
+      } else {
+        const cleanedInterim = sanitizeTranscriptSegment(sessionInterim);
+        const normalizedInterim = normalizeSegmentForCompare(cleanedInterim);
+        if (!normalizedInterim || cleanedInterim.length < MIN_INTERIM_COMMIT_CHARS) {
+          lastInterimNormalizedRef.current = '';
+          lastInterimChangedAtRef.current = 0;
+        } else if (normalizedInterim !== lastInterimNormalizedRef.current) {
+          lastInterimNormalizedRef.current = normalizedInterim;
+          lastInterimChangedAtRef.current = Date.now();
+        } else if (Date.now() - lastInterimChangedAtRef.current >= INTERIM_STABLE_COMMIT_MS) {
+          const committed = emitSegment(cleanedInterim);
+          if (committed) {
+            interimCacheRef.current.clear();
+            sessionInterim = '';
+          }
+          lastInterimNormalizedRef.current = '';
+          lastInterimChangedAtRef.current = 0;
+        }
       }
 
       const current = committedRef.current + sessionFinalRef.current + sessionInterim;
@@ -279,6 +341,9 @@ export function useTranscript({
     lastTranscriptRef.current = '';
     committedRef.current = '';
     sessionFinalRef.current = '';
+    lastEmittedFinalRef.current = '';
+    lastInterimNormalizedRef.current = '';
+    lastInterimChangedAtRef.current = 0;
     setTranscript('');
   };
 

@@ -288,11 +288,11 @@ describe('AI transcribe chunk route', () => {
     expect(res.status).toBe(200);
     expect(res.body.text).toBe('fallback transcript');
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      provider: 'windows-live-captions',
+      provider: 'local',
       sourceMode: 'system',
     }));
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      provider: 'local',
+      provider: 'windows-live-captions',
       sourceMode: 'system',
     }));
   });

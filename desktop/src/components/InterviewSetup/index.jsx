@@ -6,6 +6,9 @@ import './InterviewSetup.css';
 export default function InterviewSetup({ onStart }) {
   const { setup, updateSetup } = useInterviewStore();
   const selectedProvider = setup.aiProvider || 'openai';
+  const autoHideWindowsLiveCaptions = setup.autoHideWindowsLiveCaptions === true;
+  const windowsLiveCaptionsIncludeMicrophoneAudio =
+    setup.windowsLiveCaptionsIncludeMicrophoneAudio !== false;
   // Support legacy single-value migration: ensure interviewLangs is always an array
   const interviewLangs = Array.isArray(setup.interviewLangs)
     ? setup.interviewLangs
@@ -51,12 +54,28 @@ export default function InterviewSetup({ onStart }) {
           value={setup.sttProvider || 'auto'}
           onChange={handleChange('sttProvider')}
         >
-          <option value="auto">Auto (System: Windows Live Captions -> OpenAI -> Local -> Gemini)</option>
+          <option value="auto">Auto (System: OpenAI -> Local -> Gemini -> Windows Live Captions fallback)</option>
           <option value="windows-live-captions">Windows Live Captions (System only, Win11)</option>
           <option value="local">Local Whisper Service (no cloud)</option>
           <option value="openai">OpenAI (Whisper)</option>
           <option value="gemini">Gemini (best effort)</option>
         </select>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={autoHideWindowsLiveCaptions}
+            onChange={(e) => updateSetup({ autoHideWindowsLiveCaptions: e.target.checked })}
+          />
+          <span>Auto-hide Windows Live Captions (recommended off for stability)</span>
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={windowsLiveCaptionsIncludeMicrophoneAudio}
+            onChange={(e) => updateSetup({ windowsLiveCaptionsIncludeMicrophoneAudio: e.target.checked })}
+          />
+          <span>Auto-enable "Include microphone audio" for Windows Live Captions in Mic + System mode</span>
+        </label>
       </div>
 
       <div className="form-group">

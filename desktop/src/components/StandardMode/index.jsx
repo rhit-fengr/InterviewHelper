@@ -18,7 +18,9 @@ import './StandardMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 const MERGE_WINDOW_MS = 4_500;
-const SHORT_FRAGMENT_MAX_CHARS = 8;
+const SHORT_FRAGMENT_MAX_CHARS = 10;
+const DETECT_QUESTION_DEBOUNCE_MS = 650;
+const MIC_ROTATION_INTERVAL_MS = 2_200;
 
 function joinTranscriptText(previousText = '', currentText = '') {
   const left = String(previousText || '').trim();
@@ -145,7 +147,7 @@ export default function StandardMode({ onBack }) {
     // Debounce question detection — wait a short silence window before checking
     detectionTimeoutRef.current = setTimeout(() => {
       runQuestionDetection(getTranscriptTail(text, 1200));
-    }, 900);
+    }, DETECT_QUESTION_DEBOUNCE_MS);
   }, [runQuestionDetection]);
 
   // Support array of interview languages (use first for recognition)
@@ -153,6 +155,12 @@ export default function StandardMode({ onBack }) {
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
   const audioInputMode = session.audioInputMode || 'mic';
+  const normalizedSttProvider = String(setup.sttProvider || 'auto').trim().toLowerCase();
+  const windowsLiveCaptionsMicAssist = setup.windowsLiveCaptionsIncludeMicrophoneAudio !== false;
+  const useDualSourceMicStt = (
+    audioInputMode === 'mic-system'
+    && normalizedSttProvider !== 'windows-live-captions'
+  );
 
   const pushCombinedTranscriptForDetection = useCallback(() => {
     const combined = [micLiveTranscriptRef.current, systemLiveTranscriptRef.current]
@@ -215,11 +223,14 @@ export default function StandardMode({ onBack }) {
   }, []);
 
   const webSpeechTranscript = useTranscript({
-    enabled: isRunning && (audioInputMode === 'mic' || audioInputMode === 'mic-system'),
+    enabled: isRunning && (
+      audioInputMode === 'mic'
+      || (audioInputMode === 'mic-system' && !useDualSourceMicStt)
+    ),
     language: interviewLangs,
     onTranscriptChange: handleMicTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
-    rotationIntervalMs: 8000,
+    rotationIntervalMs: MIC_ROTATION_INTERVAL_MS,
   });
 
   const dualAudioTranscript = useDualAudioTranscript({
@@ -227,33 +238,50 @@ export default function StandardMode({ onBack }) {
     language: interviewLangs,
     provider: setup.aiProvider,
     transcribeProvider: setup.sttProvider,
-    captureMic: false,
+    autoHideWindowsLiveCaptions: setup.autoHideWindowsLiveCaptions === true,
+    includeWindowsLiveCaptionsMicrophoneAudio:
+      normalizedSttProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist,
+    captureMic: useDualSourceMicStt,
     captureSystem: true,
-    onTranscriptChange: handleSystemTranscriptUpdate,
+    onTranscriptChange: useDualSourceMicStt ? handleTranscriptUpdate : handleSystemTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
   });
 
   const transcript = audioInputMode === 'mic-system'
-    ? [webSpeechTranscript.transcript, dualAudioTranscript.transcript]
-      .map((value) => String(value || '').trim())
-      .filter(Boolean)
-      .join('\n')
+    ? useDualSourceMicStt
+      ? dualAudioTranscript.transcript
+      : [webSpeechTranscript.transcript, dualAudioTranscript.transcript]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join('\n')
     : webSpeechTranscript.transcript;
   const isListening = audioInputMode === 'mic-system'
-    ? (webSpeechTranscript.isListening || dualAudioTranscript.isListening)
+    ? useDualSourceMicStt
+      ? dualAudioTranscript.isListening
+      : (webSpeechTranscript.isListening || dualAudioTranscript.isListening)
     : webSpeechTranscript.isListening;
   const transcriptError = audioInputMode === 'mic-system'
-    ? [webSpeechTranscript.error, dualAudioTranscript.error].filter(Boolean).join(' | ')
+    ? useDualSourceMicStt
+      ? dualAudioTranscript.error
+      : [webSpeechTranscript.error, dualAudioTranscript.error].filter(Boolean).join(' | ')
     : webSpeechTranscript.error;
   const activeLanguage = audioInputMode === 'mic-system'
-    ? webSpeechTranscript.activeLanguage
+    ? useDualSourceMicStt
+      ? dualAudioTranscript.activeLanguage
+      : webSpeechTranscript.activeLanguage
     : webSpeechTranscript.activeLanguage;
-  const normalizedSttProvider = String(setup.sttProvider || 'auto').trim().toLowerCase();
   const systemSttLabel = normalizedSttProvider === 'auto'
-    ? 'windows-live-captions -> local -> openai -> gemini'
-    : normalizedSttProvider;
+    ? 'openai -> local -> gemini -> windows-live-captions'
+    : normalizedSttProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist
+      ? 'windows-live-captions + mic-assist'
+      : normalizedSttProvider;
+  const micSttLabel = normalizedSttProvider === 'auto'
+    ? 'openai -> local -> gemini'
+    : normalizedSttProvider === 'windows-live-captions'
+      ? 'openai -> local -> gemini'
+      : normalizedSttProvider;
   const sttDisplayLabel = audioInputMode === 'mic-system'
-    ? `Mic=webspeech | System=${systemSttLabel}`
+    ? `Mic=${useDualSourceMicStt ? micSttLabel : 'webspeech'} | System=${systemSttLabel}`
     : 'Mic=webspeech';
 
   const handleCustomSubmit = (e) => {

@@ -3,6 +3,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const OpenAI = require('openai');
+const os = require('os');
 const path = require('path');
 
 const SUPPORTED_PROVIDERS = ['openai', 'gemini'];
@@ -40,8 +41,29 @@ const LOCAL_TRANSCRIBE_RETRIES = Number.isFinite(parsedLocalTranscribeRetries)
 const parsedWindowsCaptionsTimeoutMs = Number(process.env.WINDOWS_CAPTIONS_TIMEOUT_MS);
 const WINDOWS_CAPTIONS_TIMEOUT_MS = Number.isFinite(parsedWindowsCaptionsTimeoutMs)
   ? Math.max(800, parsedWindowsCaptionsTimeoutMs)
-  : 1_800;
+  : 6_000;
+const parsedWindowsCaptionsBridgeIntervalMs = Number(process.env.WINDOWS_CAPTIONS_BRIDGE_INTERVAL_MS);
+const WINDOWS_CAPTIONS_BRIDGE_INTERVAL_MS = Number.isFinite(parsedWindowsCaptionsBridgeIntervalMs)
+  ? Math.max(250, parsedWindowsCaptionsBridgeIntervalMs)
+  : 700;
+const parsedWindowsCaptionsBridgeBootTimeoutMs = Number(process.env.WINDOWS_CAPTIONS_BRIDGE_BOOT_TIMEOUT_MS);
+const WINDOWS_CAPTIONS_BRIDGE_BOOT_TIMEOUT_MS = Number.isFinite(parsedWindowsCaptionsBridgeBootTimeoutMs)
+  ? Math.max(1_500, parsedWindowsCaptionsBridgeBootTimeoutMs)
+  : 10_000;
+const parsedWindowsCaptionsBridgeStaleMs = Number(process.env.WINDOWS_CAPTIONS_BRIDGE_STALE_MS);
+const WINDOWS_CAPTIONS_BRIDGE_STALE_MS = Number.isFinite(parsedWindowsCaptionsBridgeStaleMs)
+  ? Math.max(1_000, parsedWindowsCaptionsBridgeStaleMs)
+  : 4_500;
+const parsedWindowsCaptionsMinProbeIntervalMs = Number(process.env.WINDOWS_CAPTIONS_MIN_PROBE_INTERVAL_MS);
+const WINDOWS_CAPTIONS_MIN_PROBE_INTERVAL_MS = Number.isFinite(parsedWindowsCaptionsMinProbeIntervalMs)
+  ? Math.max(200, parsedWindowsCaptionsMinProbeIntervalMs)
+  : 1_000;
+const parsedWindowsCaptionsAutoLaunchCooldownMs = Number(process.env.WINDOWS_CAPTIONS_AUTO_LAUNCH_COOLDOWN_MS);
+const WINDOWS_CAPTIONS_AUTO_LAUNCH_COOLDOWN_MS = Number.isFinite(parsedWindowsCaptionsAutoLaunchCooldownMs)
+  ? Math.max(1_000, parsedWindowsCaptionsAutoLaunchCooldownMs)
+  : 8_000;
 const WINDOWS_CAPTIONS_SCRIPT_PATH = path.resolve(__dirname, '../scripts/get_windows_live_caption.ps1');
+const WINDOWS_11_MIN_BUILD = 22_621;
 const GEMINI_FALLBACK_MODELS = (
   process.env.GEMINI_FALLBACK_MODELS ||
   'gemini-2.0-flash,gemini-1.5-flash'
@@ -81,6 +103,21 @@ let localWhisperRecentLogs = [];
 let localWhisperLastExitCode = null;
 let localWhisperLastStartError = '';
 let lastWindowsLiveCaptionsText = '';
+let lastWindowsLiveCaptionsLaunchAttemptAt = 0;
+let windowsCaptionsProbePromise = null;
+let windowsCaptionsProbeCache = {
+  at: 0,
+  value: null,
+};
+let windowsCaptionsBridgeProcess = null;
+let windowsCaptionsBridgeBootPromise = null;
+let windowsCaptionsBridgeLastPayload = null;
+let windowsCaptionsBridgeLastPayloadAt = 0;
+let windowsCaptionsBridgeLastSeq = 0;
+let windowsCaptionsBridgeStdoutBuffer = '';
+let windowsCaptionsBridgeLastError = '';
+let windowsCaptionsBridgeLastExitCode = null;
+let windowsCaptionsBridgeExitHooksRegistered = false;
 
 function ensureTrailingSlash(url) {
   return typeof url === 'string' && !url.endsWith('/')
@@ -100,6 +137,17 @@ function normalizeTranscribeProvider(raw) {
   return SUPPORTED_TRANSCRIBE_PROVIDERS.includes(normalized) ? normalized : 'openai';
 }
 
+function getWindowsBuildNumber() {
+  if (process.platform !== 'win32') return 0;
+  const parts = String(os.release() || '').split('.');
+  const build = Number(parts[2]);
+  return Number.isFinite(build) ? build : 0;
+}
+
+function supportsWindowsLiveCaptions() {
+  return process.platform === 'win32' && getWindowsBuildNumber() >= WINDOWS_11_MIN_BUILD;
+}
+
 function isProviderConfigured(provider) {
   const p = normalizeProvider(provider);
   return p === 'gemini' ? isGeminiConfigured : isConfigured;
@@ -108,7 +156,7 @@ function isProviderConfigured(provider) {
 function isTranscribeProviderConfigured(provider) {
   const p = normalizeTranscribeProvider(provider);
   if (p === 'local') return Boolean(LOCAL_TRANSCRIBE_URL);
-  if (p === 'windows-live-captions') return process.platform === 'win32';
+  if (p === 'windows-live-captions') return supportsWindowsLiveCaptions();
   return isProviderConfigured(p);
 }
 
@@ -232,6 +280,163 @@ function sanitizeLanguageHint(languageHint) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runCommand(command, args = [], timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+
+    const timeoutId = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
+      reject(new Error(`Command timed out: ${command}`));
+    }, Math.max(1_000, timeoutMs));
+
+    child.stdout?.on('data', (buf) => {
+      stdout += String(buf || '');
+    });
+    child.stderr?.on('data', (buf) => {
+      stderr += String(buf || '');
+    });
+
+    child.once('error', (err) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutId);
+      reject(err);
+    });
+
+    child.once('close', (code) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutId);
+      resolve({
+        code: Number.isInteger(code) ? code : -1,
+        stdout: String(stdout || ''),
+        stderr: String(stderr || ''),
+      });
+    });
+  });
+}
+
+async function runPowerShellScript(script, timeoutMs = 8000) {
+  const result = await runCommand(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    timeoutMs
+  );
+  if (result.code !== 0) {
+    throw new Error(result.stderr.trim() || `PowerShell exited with code ${result.code}`);
+  }
+  return result.stdout.trim();
+}
+
+async function isWindowsLiveCaptionsRunning() {
+  if (!supportsWindowsLiveCaptions()) return false;
+  try {
+    const result = await runCommand('tasklist', ['/FI', 'IMAGENAME eq LiveCaptions.exe'], 5000);
+    return /LiveCaptions\.exe/i.test(result.stdout || '');
+  } catch {
+    return false;
+  }
+}
+
+async function launchWindowsLiveCaptionsProcess() {
+  if (!supportsWindowsLiveCaptions()) return false;
+  const launchScripts = [
+    '$ErrorActionPreference = "Stop"; Start-Process -FilePath "LiveCaptions" -ErrorAction Stop; Write-Output "ok"',
+    '$ErrorActionPreference = "Stop"; Start-Process -FilePath "LiveCaptions.exe" -ErrorAction Stop; Write-Output "ok"',
+  ];
+
+  for (const script of launchScripts) {
+    try {
+      const output = await runPowerShellScript(script, 6_000);
+      if (String(output || '').toLowerCase().includes('ok')) {
+        return true;
+      }
+    } catch {
+      // Try the next strategy.
+    }
+  }
+  return false;
+}
+
+async function sendWindowsLiveCaptionsHotkey() {
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class KeyboardNative {
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  public const uint KEYEVENTF_KEYUP = 0x0002;
+}
+"@
+$VK_LWIN = 0x5B
+$VK_CTRL = 0x11
+$VK_L = 0x4C
+[KeyboardNative]::keybd_event($VK_LWIN, 0, 0, [UIntPtr]::Zero)
+[KeyboardNative]::keybd_event($VK_CTRL, 0, 0, [UIntPtr]::Zero)
+[KeyboardNative]::keybd_event($VK_L, 0, 0, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 120
+[KeyboardNative]::keybd_event($VK_L, 0, [KeyboardNative]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+[KeyboardNative]::keybd_event($VK_CTRL, 0, [KeyboardNative]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+[KeyboardNative]::keybd_event($VK_LWIN, 0, [KeyboardNative]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+`;
+  await runPowerShellScript(script, 5_000);
+}
+
+async function waitForWindowsLiveCaptionsRunning(timeoutMs = 12_000, pollMs = 400) {
+  const deadline = Date.now() + Math.max(1_000, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await isWindowsLiveCaptionsRunning()) {
+      return true;
+    }
+    await sleep(Math.max(100, pollMs));
+  }
+  return false;
+}
+
+async function ensureWindowsLiveCaptionsRunning() {
+  if (!supportsWindowsLiveCaptions()) return false;
+  if (await isWindowsLiveCaptionsRunning()) return true;
+
+  const now = Date.now();
+  if (now - lastWindowsLiveCaptionsLaunchAttemptAt < WINDOWS_CAPTIONS_AUTO_LAUNCH_COOLDOWN_MS) {
+    return false;
+  }
+  lastWindowsLiveCaptionsLaunchAttemptAt = now;
+
+  try {
+    const launchedByProcess = await launchWindowsLiveCaptionsProcess();
+    if (launchedByProcess && await waitForWindowsLiveCaptionsRunning()) {
+      return true;
+    }
+  } catch {
+    // Continue with hotkey fallback.
+  }
+
+  try {
+    await sendWindowsLiveCaptionsHotkey();
+    if (await waitForWindowsLiveCaptionsRunning()) {
+      return true;
+    }
+  } catch {
+    // ignore and return false
+  }
+
+  return false;
 }
 
 function appendLocalWhisperLog(text) {
@@ -420,9 +625,62 @@ async function ensureLocalWhisperRunning() {
 }
 
 function normalizeWindowsCaptionText(text = '') {
-  return String(text || '')
+  const cleaned = String(text || '')
     .replace(/\s+/g, ' ')
     .trim();
+  if (!cleaned) return '';
+  if (
+    /^(change language|include microphone audio|change language include microphone audio)$/i.test(cleaned)
+    || /^(更改语言|切换语言|包括麦克风音频|包含麦克风音频|包含麥克風音訊|包括麥克風音訊)$/u.test(cleaned)
+  ) {
+    return '';
+  }
+  return cleaned;
+}
+
+function toComparableCaptionChars(text = '') {
+  return Array.from(String(text || ''))
+    .map((char) => {
+      const lower = char.toLowerCase();
+      return /[\p{L}\p{N}\u4e00-\u9fa5]/u.test(lower) ? lower : '';
+    })
+    .filter(Boolean);
+}
+
+function findComparableCommonPrefix(current = '', previous = '') {
+  const left = String(previous || '');
+  const right = String(current || '');
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let matchedComparableChars = 0;
+  let lastMatchedRightRawIndex = 0;
+
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftChar = left[leftIndex];
+    const rightChar = right[rightIndex];
+    const leftComparable = /[\p{L}\p{N}\u4e00-\u9fa5]/u.test(leftChar) ? leftChar.toLowerCase() : '';
+    const rightComparable = /[\p{L}\p{N}\u4e00-\u9fa5]/u.test(rightChar) ? rightChar.toLowerCase() : '';
+
+    if (!leftComparable) {
+      leftIndex += 1;
+      continue;
+    }
+    if (!rightComparable) {
+      rightIndex += 1;
+      continue;
+    }
+    if (leftComparable !== rightComparable) break;
+
+    matchedComparableChars += 1;
+    leftIndex += 1;
+    rightIndex += 1;
+    lastMatchedRightRawIndex = rightIndex;
+  }
+
+  return {
+    matchedComparableChars,
+    rawCurrentSliceIndex: lastMatchedRightRawIndex,
+  };
 }
 
 function computeWindowsCaptionDelta(nextText = '') {
@@ -439,105 +697,256 @@ function computeWindowsCaptionDelta(nextText = '') {
   if (current.startsWith(previous)) {
     return current.slice(previous.length).trim();
   }
+
+  const currentComparable = toComparableCaptionChars(current);
+  const previousComparable = toComparableCaptionChars(previous);
+  if (currentComparable.length === 0) return '';
+  if (previousComparable.length === 0) return current;
+
+  const prefixInfo = findComparableCommonPrefix(current, previous);
+  const matchedRatioAgainstPrevious = prefixInfo.matchedComparableChars / Math.max(1, previousComparable.length);
+  const matchedRatioAgainstCurrent = prefixInfo.matchedComparableChars / Math.max(1, currentComparable.length);
+
+  if (matchedRatioAgainstCurrent >= 0.98 && currentComparable.length <= previousComparable.length) {
+    return '';
+  }
+
+  if (
+    prefixInfo.matchedComparableChars >= 12
+    && matchedRatioAgainstPrevious >= 0.55
+    && prefixInfo.rawCurrentSliceIndex < current.length
+  ) {
+    return current.slice(prefixInfo.rawCurrentSliceIndex).trim();
+  }
+
+  if (previous.includes(current)) return '';
   if (current.includes(previous)) {
     const index = current.indexOf(previous);
     return current.slice(index + previous.length).trim();
   }
-  if (previous.includes(current)) return '';
+
   return current;
 }
 
-function runWindowsCaptionsProbe() {
-  return new Promise((resolve, reject) => {
-    if (process.platform !== 'win32') {
-      const err = new Error('Windows Live Captions provider is only available on Windows.');
-      err.status = 503;
-      reject(err);
-      return;
-    }
-    if (!fs.existsSync(WINDOWS_CAPTIONS_SCRIPT_PATH)) {
-      const err = new Error(`Windows captions probe script not found: ${WINDOWS_CAPTIONS_SCRIPT_PATH}`);
-      err.status = 503;
-      reject(err);
-      return;
-    }
+function normalizeWindowsProbePayload(rawPayload = {}) {
+  const parsed = rawPayload && typeof rawPayload === 'object' ? rawPayload : {};
+  return {
+    ok: parsed.ok === true,
+    status: String(parsed.status || '').trim().toLowerCase() || 'unknown',
+    text: String(parsed.text || '').trim(),
+    error: String(parsed.error || '').trim(),
+  };
+}
 
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', WINDOWS_CAPTIONS_SCRIPT_PATH,
-    ], {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+function parseWindowsProbeLine(rawLine = '') {
+  const line = String(rawLine || '').trim();
+  if (!line) return null;
+  try {
+    return normalizeWindowsProbePayload(JSON.parse(line));
+  } catch {
+    return null;
+  }
+}
 
-    let stdout = '';
-    let stderr = '';
-    const timeoutId = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        // ignore kill errors
-      }
-      const err = new Error('Windows Live Captions probe timed out.');
-      err.status = 504;
-      reject(err);
-    }, WINDOWS_CAPTIONS_TIMEOUT_MS);
+function stopWindowsCaptionsBridge() {
+  const child = windowsCaptionsBridgeProcess;
+  windowsCaptionsBridgeProcess = null;
+  windowsCaptionsBridgeBootPromise = null;
+  windowsCaptionsBridgeStdoutBuffer = '';
+  if (!child) return;
+  try {
+    child.kill();
+  } catch {
+    // ignore kill errors
+  }
+}
 
-    child.stdout?.on('data', (buf) => {
-      stdout += String(buf || '');
-    });
-    child.stderr?.on('data', (buf) => {
-      stderr += String(buf || '');
-    });
-
-    child.once('error', (err) => {
-      clearTimeout(timeoutId);
-      const probeErr = new Error(`Failed to run Windows Live Captions probe: ${err?.message || err}`);
-      probeErr.status = 503;
-      reject(probeErr);
-    });
-
-    child.once('close', (code) => {
-      clearTimeout(timeoutId);
-      const output = String(stdout || '')
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      const lastLine = output.length > 0 ? output[output.length - 1] : '';
-      let parsed = null;
-      if (lastLine) {
-        try {
-          parsed = JSON.parse(lastLine);
-        } catch {
-          parsed = null;
-        }
-      }
-
-      if (!parsed) {
-        const err = new Error(`Windows Live Captions probe returned invalid output. ${String(stderr || '').trim()}`.trim());
-        err.status = 502;
-        reject(err);
-        return;
-      }
-
-      if (!parsed.ok) {
-        const status = String(parsed.status || '').trim().toLowerCase();
-        // Soft-fail common discovery states to avoid breaking the whole STT chain.
-        if (status === 'not_running' || status === 'captions_not_found' || status === 'window_not_found') {
-          resolve(parsed);
-          return;
-        }
-        const message = String(parsed.error || parsed.status || stderr || `exit code ${code}`);
-        const err = new Error(`Windows Live Captions probe failed: ${message}`);
-        err.status = 503;
-        reject(err);
-        return;
-      }
-
-      resolve(parsed);
-    });
+function registerWindowsCaptionsExitHooks() {
+  if (windowsCaptionsBridgeExitHooksRegistered) return;
+  windowsCaptionsBridgeExitHooksRegistered = true;
+  process.once('exit', stopWindowsCaptionsBridge);
+  process.once('SIGINT', () => {
+    stopWindowsCaptionsBridge();
+    process.exit(0);
   });
+  process.once('SIGTERM', () => {
+    stopWindowsCaptionsBridge();
+    process.exit(0);
+  });
+}
+
+function handleWindowsCaptionsBridgeStdout(chunk) {
+  windowsCaptionsBridgeStdoutBuffer += String(chunk || '');
+  const lines = windowsCaptionsBridgeStdoutBuffer.split(/\r?\n/);
+  windowsCaptionsBridgeStdoutBuffer = lines.pop() || '';
+  for (const line of lines) {
+    const payload = parseWindowsProbeLine(line);
+    if (!payload) continue;
+    windowsCaptionsBridgeLastPayload = payload;
+    windowsCaptionsBridgeLastPayloadAt = Date.now();
+    windowsCaptionsBridgeLastSeq += 1;
+  }
+}
+
+function spawnWindowsCaptionsBridge() {
+  if (!supportsWindowsLiveCaptions()) {
+    const err = new Error(
+      process.platform !== 'win32'
+        ? 'Windows Live Captions provider is only available on Windows.'
+        : `Windows Live Captions requires Windows 11 22H2+ (build ${WINDOWS_11_MIN_BUILD}+).`
+    );
+    err.status = 503;
+    throw err;
+  }
+  if (!fs.existsSync(WINDOWS_CAPTIONS_SCRIPT_PATH)) {
+    const err = new Error(`Windows captions probe script not found: ${WINDOWS_CAPTIONS_SCRIPT_PATH}`);
+    err.status = 503;
+    throw err;
+  }
+
+  registerWindowsCaptionsExitHooks();
+  windowsCaptionsBridgeLastError = '';
+  windowsCaptionsBridgeLastExitCode = null;
+
+  const child = spawn('powershell.exe', [
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', WINDOWS_CAPTIONS_SCRIPT_PATH,
+    '-Watch',
+    '-IntervalMs', String(WINDOWS_CAPTIONS_BRIDGE_INTERVAL_MS),
+  ], {
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  child.stdout?.on('data', handleWindowsCaptionsBridgeStdout);
+  child.stderr?.on('data', (buf) => {
+    const line = String(buf || '').trim();
+    if (!line) return;
+    windowsCaptionsBridgeLastError = line;
+  });
+  child.once('error', (err) => {
+    windowsCaptionsBridgeLastError = String(err?.message || err || 'Unknown bridge spawn error');
+    windowsCaptionsBridgeLastExitCode = -1;
+  });
+  child.once('close', (code) => {
+    windowsCaptionsBridgeLastExitCode = Number.isInteger(code) ? code : -1;
+    if (windowsCaptionsBridgeProcess && windowsCaptionsBridgeProcess.pid === child.pid) {
+      windowsCaptionsBridgeProcess = null;
+    }
+  });
+
+  windowsCaptionsBridgeProcess = child;
+  return child;
+}
+
+function isWindowsCaptionsBridgeAlive() {
+  return Boolean(
+    windowsCaptionsBridgeProcess
+      && windowsCaptionsBridgeProcess.exitCode === null
+      && !windowsCaptionsBridgeProcess.killed
+  );
+}
+
+async function ensureWindowsCaptionsBridgeRunning() {
+  if (isWindowsCaptionsBridgeAlive()) return true;
+
+  if (!windowsCaptionsBridgeBootPromise) {
+    windowsCaptionsBridgeBootPromise = (async () => {
+      const startSeq = windowsCaptionsBridgeLastSeq;
+      const child = spawnWindowsCaptionsBridge();
+      const deadline = Date.now() + WINDOWS_CAPTIONS_BRIDGE_BOOT_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (!isWindowsCaptionsBridgeAlive() || windowsCaptionsBridgeProcess?.pid !== child.pid) {
+          const suffix = windowsCaptionsBridgeLastExitCode !== null
+            ? ` (exit code ${windowsCaptionsBridgeLastExitCode})`
+            : '';
+          const err = new Error(
+            `Windows Live Captions bridge exited before first payload${suffix}. ${windowsCaptionsBridgeLastError}`.trim()
+          );
+          err.status = 503;
+          throw err;
+        }
+        if (windowsCaptionsBridgeLastSeq > startSeq) {
+          return true;
+        }
+        await sleep(120);
+      }
+
+      const timeoutErr = new Error('Windows Live Captions bridge did not become ready in time.');
+      timeoutErr.status = 504;
+      throw timeoutErr;
+    })().finally(() => {
+      windowsCaptionsBridgeBootPromise = null;
+    });
+  }
+
+  return windowsCaptionsBridgeBootPromise;
+}
+
+async function runWindowsCaptionsProbe({ maxWaitMs = WINDOWS_CAPTIONS_TIMEOUT_MS, preferFresh = true } = {}) {
+  await ensureWindowsCaptionsBridgeRunning();
+
+  const waitMs = Math.max(400, Number(maxWaitMs) || WINDOWS_CAPTIONS_TIMEOUT_MS);
+  const deadline = Date.now() + waitMs;
+  const startSeq = windowsCaptionsBridgeLastSeq;
+  const now = Date.now();
+  const currentAge = now - windowsCaptionsBridgeLastPayloadAt;
+
+  if (windowsCaptionsBridgeLastPayload && (!preferFresh || currentAge <= WINDOWS_CAPTIONS_BRIDGE_STALE_MS)) {
+    return windowsCaptionsBridgeLastPayload;
+  }
+
+  while (Date.now() < deadline) {
+    if (!isWindowsCaptionsBridgeAlive()) {
+      const err = new Error(
+        `Windows Live Captions bridge stopped unexpectedly. ${windowsCaptionsBridgeLastError}`.trim()
+      );
+      err.status = 503;
+      throw err;
+    }
+    if (windowsCaptionsBridgeLastPayload && windowsCaptionsBridgeLastSeq > startSeq) {
+      return windowsCaptionsBridgeLastPayload;
+    }
+    await sleep(120);
+  }
+
+  if (windowsCaptionsBridgeLastPayload) {
+    return windowsCaptionsBridgeLastPayload;
+  }
+  const err = new Error('Windows Live Captions probe timed out.');
+  err.status = 504;
+  throw err;
+}
+
+async function runWindowsCaptionsProbeCached() {
+  const now = Date.now();
+  const cachedValue = windowsCaptionsProbeCache.value;
+  if (cachedValue && (now - windowsCaptionsProbeCache.at) < WINDOWS_CAPTIONS_MIN_PROBE_INTERVAL_MS) {
+    return cachedValue;
+  }
+
+  if (!windowsCaptionsProbePromise) {
+    windowsCaptionsProbePromise = runWindowsCaptionsProbe({
+      maxWaitMs: WINDOWS_CAPTIONS_TIMEOUT_MS,
+      preferFresh: true,
+    })
+      .then((result) => {
+        windowsCaptionsProbeCache = {
+          at: Date.now(),
+          value: result,
+        };
+        return result;
+      })
+      .finally(() => {
+        windowsCaptionsProbePromise = null;
+      });
+  }
+
+  if (cachedValue) {
+    return cachedValue;
+  }
+  return windowsCaptionsProbePromise;
 }
 
 async function transcribeWithWindowsLiveCaptions({ sourceMode }) {
@@ -546,7 +955,31 @@ async function transcribeWithWindowsLiveCaptions({ sourceMode }) {
     // This provider is intended for system/interviewer stream only.
     return '';
   }
-  const result = await runWindowsCaptionsProbe();
+
+  let result;
+  try {
+    result = await runWindowsCaptionsProbeCached();
+  } catch (err) {
+    // Probe timeout is a soft failure in real-time polling mode.
+    if (Number(err?.status) === 504) return '';
+    throw err;
+  }
+
+  if (result && result.ok === false && String(result.status || '').toLowerCase() === 'not_running') {
+    await ensureWindowsLiveCaptionsRunning();
+    windowsCaptionsProbeCache = { at: 0, value: null };
+    try {
+      result = await runWindowsCaptionsProbe({
+        maxWaitMs: WINDOWS_CAPTIONS_TIMEOUT_MS,
+        preferFresh: true,
+      });
+      windowsCaptionsProbeCache = { at: Date.now(), value: result };
+    } catch (err) {
+      if (Number(err?.status) === 504) return '';
+      throw err;
+    }
+  }
+
   if (result && result.ok === false) {
     return '';
   }
@@ -854,7 +1287,7 @@ async function transcribeAudioChunk({
         : transcriptionProvider === 'local'
           ? 'Audio transcription requires LOCAL_TRANSCRIBE_URL.'
           : transcriptionProvider === 'windows-live-captions'
-            ? 'Windows Live Captions provider is only available on Windows 11.'
+            ? `Windows Live Captions provider requires Windows 11 22H2+ (build ${WINDOWS_11_MIN_BUILD}+) and enabled accessibility captions.`
         : 'Audio transcription requires OPENAI_API_KEY.'
     );
     err.status = 503;

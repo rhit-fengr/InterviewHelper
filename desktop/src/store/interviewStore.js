@@ -24,6 +24,8 @@ export const useInterviewStore = create(
       setup: {
         aiProvider: 'openai',
         sttProvider: 'auto',
+        autoHideWindowsLiveCaptions: false,
+        windowsLiveCaptionsIncludeMicrophoneAudio: true,
         topic: 'software-engineering',
         interviewLangs: ['en-US'],
         answerLang: 'en-US',

@@ -2,6 +2,22 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+function readE2EScenarioConfig() {
+  const rawConfig = String(process.env.ELECTRON_E2E_SCENARIO_JSON || '').trim();
+  if (!rawConfig) return null;
+
+  try {
+    return JSON.parse(rawConfig);
+  } catch (error) {
+    console.error('[electron preload] failed to load E2E scenario config:', error);
+    return {
+      error: 'Failed to parse E2E scenario config from ELECTRON_E2E_SCENARIO_JSON',
+    };
+  }
+}
+
+const e2eScenarioConfig = readE2EScenarioConfig();
+
 // Expose a safe, controlled API to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
   // Window management
@@ -24,4 +40,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Check if running inside Electron
   isElectron: true,
+});
+
+contextBridge.exposeInMainWorld('electronE2E', {
+  config: e2eScenarioConfig,
 });

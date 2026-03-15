@@ -17,7 +17,11 @@
     "build:win:portable": "npm run clean:pack && npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win portable --x64",
     "release:win": "powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1",
     "release:win:unsigned": "powershell -ExecutionPolicy Bypass -File scripts/release-win.ps1 -NoSign",
-    "test": "react-scripts test"
+    "test": "react-scripts test",
+    "test:electron-smoke": "node scripts/electron-smoke.cjs",
+    "test:generate-audio-fixtures": "node scripts/generate-audio-fixtures.cjs",
+    "test:audio-scenarios": "node scripts/electron-audio-scenarios.cjs",
+    "test:e2e": "npm run test:electron-smoke && npm run test:audio-scenarios"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -31,6 +35,7 @@
     "cross-env": "^7.0.3",
     "electron": "^27.0.0",
     "electron-builder": "^24.6.0",
+    "playwright": "^1.54.2",
     "wait-on": "^7.0.0"
   },
   "browserslist": {

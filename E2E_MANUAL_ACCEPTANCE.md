@@ -2,6 +2,27 @@
 
 本文档用于按 `README.md` 的 Feature List 逐条验收，强调“可执行步骤 + 可观察结果”。
 
+## 自动化现状
+
+- 已提供最小 Electron smoke 自动化：`cd desktop && npm run test:electron-smoke`
+- 已提供双来源音频自动化：`cd desktop && npm run test:audio-scenarios`
+- 已提供一键全自动入口：`cd desktop && npm run test:e2e`
+- 当前自动化覆盖：
+  - Interview Setup 基础配置
+  - 多语言勾选与“至少保留一个语言”约束
+  - Session Settings 导航与 `Auto Answer` 开关
+  - Standard Mode 手工输入问题
+  - AI 流式回答渲染（通过 mock server response）
+  - Conversation History 的 `Collapse / Hide / Show`
+  - Mic + System 双来源场景
+  - 固定音频素材的时间编排、重叠播放和跨来源去重
+  - 自动问题检测与自动回答在双来源模式下的主链路
+- 当前仍建议保留人工验收：
+  - 真实麦克风输入、系统音频捕获、Windows Live Captions 联动
+  - 屏幕共享保护在 Zoom / Teams / Meet / OBS 中的真实表现
+  - 多设备 Undetectable Mode 联调
+  - 真正依赖外部模型与网络稳定性的端到端效果
+
 ## 0. 验收范围（与 README 对齐）
 
 - Live Transcript
@@ -55,6 +76,22 @@ npm start
 - 结果：`PASS / FAIL`
 - 证据：截图/录屏/关键日志
 - 备注：失败现象 + 复现步骤
+
+### 1.4 自动化 smoke（推荐先跑）
+
+1. 构建并运行最小 Electron 自动化
+```bash
+cd desktop
+npm run test:electron-smoke
+npm run test:audio-scenarios
+npm run test:e2e
+```
+
+预期：
+- Electron 窗口能直接从本地 build 启动，不依赖手工打开 `localhost:3000`
+- 自动完成 Setup -> Session -> Standard Mode 主链路
+- 自动生成截图到 `output/playwright/electron-smoke.png`
+- 自动生成双来源音频截图到 `output/playwright/electron-audio-overlap.png`
 
 ---
 

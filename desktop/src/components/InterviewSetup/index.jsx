@@ -39,8 +39,13 @@ export default function InterviewSetup({ onStart }) {
       <p className="setup-subtitle">Configure your interview preferences below.</p>
 
       <div className="form-group">
-        <label className="form-label">AI Provider</label>
-        <select className="form-select" value={selectedProvider} onChange={handleChange('aiProvider')}>
+        <label className="form-label" htmlFor="setup-ai-provider">AI Provider</label>
+        <select
+          id="setup-ai-provider"
+          className="form-select"
+          value={selectedProvider}
+          onChange={handleChange('aiProvider')}
+        >
           {AI_PROVIDERS.map((p) => (
             <option key={p.value} value={p.value}>{p.label}</option>
           ))}
@@ -48,8 +53,9 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Transcription Provider</label>
+        <label className="form-label" htmlFor="setup-stt-provider">Transcription Provider</label>
         <select
+          id="setup-stt-provider"
           className="form-select"
           value={setup.sttProvider || 'auto'}
           onChange={handleChange('sttProvider')}
@@ -79,8 +85,8 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Topic</label>
-        <select className="form-select" value={setup.topic} onChange={handleChange('topic')}>
+        <label className="form-label" htmlFor="setup-topic">Topic</label>
+        <select id="setup-topic" className="form-select" value={setup.topic} onChange={handleChange('topic')}>
           {TOPICS.map((t) => (
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
@@ -88,9 +94,9 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">
+        <div className="form-label" id="setup-interview-language-label">
           Interview Language <span className="form-label-hint">(select one or more)</span>
-        </label>
+        </div>
         <div className="lang-checkbox-grid">
           {LANGUAGES.map((l) => {
             const isOnlySelected = interviewLangs.includes(l.value) && interviewLangs.length === 1;
@@ -113,8 +119,13 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Answer Language</label>
-        <select className="form-select" value={setup.answerLang} onChange={handleChange('answerLang')}>
+        <label className="form-label" htmlFor="setup-answer-language">Answer Language</label>
+        <select
+          id="setup-answer-language"
+          className="form-select"
+          value={setup.answerLang}
+          onChange={handleChange('answerLang')}
+        >
           {LANGUAGES.map((l) => (
             <option key={l.value} value={l.value}>{l.label}</option>
           ))}
@@ -122,8 +133,9 @@ export default function InterviewSetup({ onStart }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Additional Instructions</label>
+        <label className="form-label" htmlFor="setup-custom-instructions">Additional Instructions</label>
         <textarea
+          id="setup-custom-instructions"
           className="form-textarea"
           placeholder="Tell us about yourself or add special instructions (e.g. 'I am a senior engineer at Google with 8 years of experience...')"
           value={setup.customInstructions}

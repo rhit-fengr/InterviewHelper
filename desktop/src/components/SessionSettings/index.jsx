@@ -17,6 +17,7 @@ function Toggle({ checked, onChange, label }) {
         className={`toggle ${checked ? 'toggle-on' : ''}`}
         role="switch"
         tabIndex={0}
+        aria-label={label}
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         onKeyDown={handleKeyDown}

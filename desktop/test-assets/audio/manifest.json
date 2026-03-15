@@ -1,0 +1,48 @@
+[
+  {
+    "id": "system-question-stereo",
+    "fileName": "system-question-stereo.wav",
+    "durationMs": 1800,
+    "channelCount": 2,
+    "frequencies": [
+      440,
+      554
+    ],
+    "description": "Deterministic stereo system-audio question fixture.",
+    "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\system-question-stereo.wav"
+  },
+  {
+    "id": "mic-leakage-mono",
+    "fileName": "mic-leakage-mono.wav",
+    "durationMs": 900,
+    "channelCount": 1,
+    "frequencies": [
+      660
+    ],
+    "description": "Mono microphone leakage fixture used to verify cross-source dedupe.",
+    "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\mic-leakage-mono.wav"
+  },
+  {
+    "id": "mic-answer-mono",
+    "fileName": "mic-answer-mono.wav",
+    "durationMs": 1600,
+    "channelCount": 1,
+    "frequencies": [
+      330
+    ],
+    "description": "Mono microphone answer fixture.",
+    "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\mic-answer-mono.wav"
+  },
+  {
+    "id": "system-followup-stereo",
+    "fileName": "system-followup-stereo.wav",
+    "durationMs": 1200,
+    "channelCount": 2,
+    "frequencies": [
+      392,
+      494
+    ],
+    "description": "Deterministic stereo system-audio follow-up fixture.",
+    "filePath": "D:\\Github\\InterviewHelper\\desktop\\test-assets\\audio\\system-followup-stereo.wav"
+  }
+]

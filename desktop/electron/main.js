@@ -5,7 +5,16 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const rendererUrlOverride = String(process.env.ELECTRON_RENDERER_URL || '').trim();
+const rendererHtmlOverride = String(process.env.ELECTRON_RENDERER_HTML || '').trim();
+const isolatedUserDataDir = String(process.env.ELECTRON_USER_DATA_DIR || '').trim();
+const isDev = !rendererUrlOverride && !rendererHtmlOverride && (
+  process.env.NODE_ENV === 'development' || !app.isPackaged
+);
+
+if (isolatedUserDataDir) {
+  app.setPath('userData', path.resolve(isolatedUserDataDir));
+}
 
 let mainWindow;
 let localWhisperProcess = null;
@@ -798,7 +807,11 @@ function createWindow() {
     console.error('[electron] renderer process gone:', details?.reason || 'unknown');
   });
 
-  if (isDev) {
+  if (rendererUrlOverride) {
+    mainWindow.loadURL(rendererUrlOverride);
+  } else if (rendererHtmlOverride) {
+    mainWindow.loadFile(path.resolve(app.getAppPath(), rendererHtmlOverride));
+  } else if (isDev) {
     mainWindow.loadURL('http://localhost:3000');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../build/index.html'));

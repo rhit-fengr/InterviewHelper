@@ -564,6 +564,7 @@ export default function StandardMode({ onBack }) {
         <form className="custom-input-form" onSubmit={handleCustomSubmit}>
           <input
             className="custom-input"
+            aria-label="Manual question input"
             placeholder="Type a question manually and press Enter…"
             value={customInput}
             onChange={(e) => setCustomInput(e.target.value)}

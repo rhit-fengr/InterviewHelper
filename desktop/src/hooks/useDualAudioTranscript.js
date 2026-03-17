@@ -170,6 +170,7 @@ export function useDualAudioTranscript({
   onTranscriptChange,
   onFinalSegment,
   onWindowsLiveCaptionsStatusChange,
+  onRuntimeStateChange,
 } = {}) {
   const languageKey = Array.isArray(language)
     ? language.map((item) => String(item || '').trim()).join('|')
@@ -190,6 +191,7 @@ export function useDualAudioTranscript({
   const onChangeRef = useRef(onTranscriptChange);
   const onFinalSegmentRef = useRef(onFinalSegment);
   const onWindowsLiveCaptionsStatusChangeRef = useRef(onWindowsLiveCaptionsStatusChange);
+  const onRuntimeStateChangeRef = useRef(onRuntimeStateChange);
   const enabledRef = useRef(enabled);
   const transcribeInFlightRef = useRef({ mic: false, system: false });
   const pendingChunkBySourceRef = useRef({ mic: null, system: null });
@@ -216,6 +218,10 @@ export function useDualAudioTranscript({
   useEffect(() => {
     onWindowsLiveCaptionsStatusChangeRef.current = onWindowsLiveCaptionsStatusChange;
   }, [onWindowsLiveCaptionsStatusChange]);
+
+  useEffect(() => {
+    onRuntimeStateChangeRef.current = onRuntimeStateChange;
+  }, [onRuntimeStateChange]);
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -271,6 +277,12 @@ export function useDualAudioTranscript({
       window.electronAPI.releaseLocalWhisper().catch(() => {
         // Ignore release errors; service will still be cleaned up on app quit.
       });
+      onRuntimeStateChangeRef.current?.({
+        diagnostics: {
+          localWhisperLeaseCount: 0,
+          localWhisperManaged: false,
+        },
+      });
     }
 
     transcribeInFlightRef.current = { mic: false, system: false };
@@ -283,6 +295,13 @@ export function useDualAudioTranscript({
     timeoutFailureCountRef.current = 0;
 
     setIsListening(false);
+    onRuntimeStateChangeRef.current?.({
+      status: 'idle',
+      isListening: false,
+      diagnostics: {
+        windowsLiveCaptionsAutoHidePending: false,
+      },
+    });
   }, []);
 
   const transcribeChunk = useCallback(async (chunkBlob, sourceMode) => {
@@ -325,6 +344,12 @@ export function useDualAudioTranscript({
         .trim()
         .toLowerCase();
       const providerUsed = String(body?.providerUsed || '').trim().toLowerCase();
+      onRuntimeStateChangeRef.current?.({
+        lastError: '',
+        diagnostics: {
+          providerUsed: providerUsed || effectiveTranscribeProvider,
+        },
+      });
       const cleanedSegment = sanitizeTranscriptSegment(String(body?.text || ''));
       if (!cleanedSegment) {
         if (
@@ -414,6 +439,15 @@ export function useDualAudioTranscript({
       transcriptRef.current = nextTranscript;
       setTranscript(nextTranscript);
       onChangeRef.current?.(nextTranscript);
+      onRuntimeStateChangeRef.current?.({
+        status: 'running',
+        isListening: true,
+        lastError: '',
+        diagnostics: {
+          providerUsed: providerUsed || effectiveTranscribeProvider,
+          activeLanguage: primaryLanguage,
+        },
+      });
       onFinalSegmentRef.current?.({
         text: cleanedSegment,
         language: primaryLanguage,
@@ -435,6 +469,10 @@ export function useDualAudioTranscript({
           return;
         }
       }
+      onRuntimeStateChangeRef.current?.({
+        status: 'error',
+        lastError: message,
+      });
       if (/rate limit/i.test(String(message))) {
         setError('Rate limit reached while transcribing audio. Wait a moment and try again.');
       } else if (err?.name === 'AbortError') {
@@ -536,6 +574,14 @@ export function useDualAudioTranscript({
             autoHidePending: windowsCaptionsAutoHidePendingRef.current,
             microphoneAudioEnabled: ensureResult?.microphoneAudioEnabled !== false,
           });
+          onRuntimeStateChangeRef.current?.({
+            diagnostics: {
+              windowsLiveCaptionsRunning: ensureResult?.ok === true,
+              windowsLiveCaptionsHidden: ensureResult?.hidden === true,
+              windowsLiveCaptionsAutoHidePending: windowsCaptionsAutoHidePendingRef.current,
+              windowsLiveCaptionsMicrophoneAudioEnabled: ensureResult?.microphoneAudioEnabled === true,
+            },
+          });
           if (!ensureResult?.ok && normalizedSystemTranscribeProvider === 'windows-live-captions') {
             throw new Error(
               ensureResult?.message || 'Unable to start Windows Live Captions automatically. Press Win+Ctrl+L and retry.'
@@ -555,6 +601,14 @@ export function useDualAudioTranscript({
 
         if (shouldEnsureLocalService && window?.electronAPI?.ensureLocalWhisper) {
           const localResult = await window.electronAPI.ensureLocalWhisper();
+          onRuntimeStateChangeRef.current?.({
+            diagnostics: {
+              localWhisperHealthy: localResult?.ok === true,
+              localWhisperManaged: localResult?.managed === true || String(localResult?.status || '').includes('managed'),
+              localWhisperLeaseCount: Number(localResult?.leaseCount) || 0,
+              localWhisperHealthUrl: String(localResult?.healthUrl || ''),
+            },
+          });
           if (localResult?.ok) {
             localWhisperLeaseRef.current = true;
           } else if (
@@ -727,6 +781,16 @@ export function useDualAudioTranscript({
           throw new Error('No audio tracks available for recording.');
         }
 
+        onRuntimeStateChangeRef.current?.({
+          status: 'running',
+          isListening: true,
+          startedAt: Date.now(),
+          lastError: '',
+          diagnostics: {
+            activeLanguage: primaryLanguage,
+          },
+        });
+
         recordersRef.current.mic = micRecorder;
         if (!useWindowsLiveCaptionsPoller) {
           recordersRef.current.system = systemRecorder;
@@ -760,6 +824,11 @@ export function useDualAudioTranscript({
         }
         const message = err?.message || 'Failed to start dual audio capture.';
         setError(message);
+        onRuntimeStateChangeRef.current?.({
+          status: 'error',
+          isListening: false,
+          lastError: message,
+        });
         stopCapture();
       }
     };

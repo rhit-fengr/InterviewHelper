@@ -54,7 +54,16 @@ function shouldMergeTranscriptEntries(previousEntry, nextEntry) {
 }
 
 export default function StandardMode({ onBack }) {
-  const { setup, session, personalInfo, answerSettings, displaySettings } = useInterviewStore();
+  const {
+    setup,
+    session,
+    personalInfo,
+    answerSettings,
+    displaySettings,
+    runtime,
+    updateRuntime,
+    resetRuntime,
+  } = useInterviewStore();
   const [isRunning, setIsRunning] = useState(false);
   const [customInput, setCustomInput] = useState('');
   const [conversationHistory, setConversationHistory] = useState([]);
@@ -190,7 +199,19 @@ export default function StandardMode({ onBack }) {
     if (status.error) {
       setWindowsCaptionsWindowError(String(status.error));
     }
-  }, []);
+    updateRuntime({
+      diagnostics: {
+        windowsLiveCaptionsRunning: status.running === true,
+        windowsLiveCaptionsHidden: status.hidden === true,
+        windowsLiveCaptionsAutoHidePending: status.autoHidePending === true,
+        windowsLiveCaptionsMicrophoneAudioEnabled: status.microphoneAudioEnabled === true,
+      },
+    });
+  }, [updateRuntime]);
+
+  const handleRuntimeStateChange = useCallback((nextState = {}) => {
+    updateRuntime(nextState);
+  }, [updateRuntime]);
 
   const syncWindowsLiveCaptionsWindowState = useCallback(async () => {
     if (!canToggleWindowsLiveCaptionsWindow || !window?.electronAPI?.getWindowsLiveCaptionsStatus) return;
@@ -296,6 +317,7 @@ export default function StandardMode({ onBack }) {
       : handleMicTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
     onWindowsLiveCaptionsStatusChange: handleWindowsLiveCaptionsStatusChange,
+    onRuntimeStateChange: handleRuntimeStateChange,
   });
 
   const transcript = useDualAudioForCurrentMode
@@ -327,6 +349,13 @@ export default function StandardMode({ onBack }) {
     : useProviderDrivenMicOnly
       ? `Mic=${useMicOnlyWindowsCaptions ? 'windows-live-captions + mic-assist' : micSttLabel}`
       : 'Mic=webspeech';
+  const runtimeStatusLabel = runtime.status || (isRunning ? 'starting' : 'idle');
+  const runtimeSourceLabel = audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic';
+  const runtimeProviderLabel = runtime.diagnostics.providerUsed || (
+    normalizedSttProvider === 'auto'
+      ? 'auto'
+      : normalizedSttProvider
+  );
 
   useEffect(() => {
     setWindowsCaptionsWindowHidden(setup.autoHideWindowsLiveCaptions === true);
@@ -348,6 +377,43 @@ export default function StandardMode({ onBack }) {
       clearInterval(timer);
     };
   }, [isRunning, canToggleWindowsLiveCaptionsWindow, syncWindowsLiveCaptionsWindowState]);
+
+  useEffect(() => {
+    updateRuntime({
+      activeProvider: runtimeProviderLabel,
+      providerDetail: sttDisplayLabel,
+      sourceMode: runtimeSourceLabel,
+      status: isRunning ? (isListening ? 'running' : 'starting') : 'idle',
+      isListening,
+      startedAt: isRunning
+        ? (runtime.startedAt || Date.now())
+        : null,
+      lastError: transcriptError || aiError || windowsCaptionsWindowError || localError || '',
+      diagnostics: {
+        sourceLabel: sttDisplayLabel,
+        activeLanguage: activeLanguage || '',
+      },
+    });
+  }, [
+    activeLanguage,
+    aiError,
+    isListening,
+    isRunning,
+    localError,
+    runtime.startedAt,
+    runtimeProviderLabel,
+    runtimeSourceLabel,
+    sttDisplayLabel,
+    transcriptError,
+    updateRuntime,
+    windowsCaptionsWindowError,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      resetRuntime();
+    };
+  }, [resetRuntime]);
 
   const handleToggleWindowsLiveCaptionsWindow = useCallback(async () => {
     if (!canToggleWindowsLiveCaptionsWindow || windowsCaptionsWindowBusy || !window?.electronAPI) return;
@@ -466,6 +532,12 @@ export default function StandardMode({ onBack }) {
       clearTimeout(detectionTimeoutRef.current);
       setIsRunning(false);
       cancelGeneration();
+      if (canToggleWindowsLiveCaptionsWindow && window?.electronAPI?.stopWindowsLiveCaptions) {
+        window.electronAPI.stopWindowsLiveCaptions().catch(() => {
+          // Ignore stop failures; app quit path also cleans up managed captions.
+        });
+      }
+      resetRuntime();
       pendingQuestionRef.current = null;
       micLiveTranscriptRef.current = '';
       systemLiveTranscriptRef.current = '';
@@ -473,6 +545,19 @@ export default function StandardMode({ onBack }) {
       setIsRunning(true);
       setLocalError('');
       setWindowsCaptionsWindowError('');
+      updateRuntime({
+        activeProvider: runtimeProviderLabel,
+        providerDetail: sttDisplayLabel,
+        sourceMode: runtimeSourceLabel,
+        status: 'starting',
+        isListening: false,
+        startedAt: Date.now(),
+        lastError: '',
+        diagnostics: {
+          sourceLabel: sttDisplayLabel,
+          activeLanguage: activeLanguage || '',
+        },
+      });
       clearAnswer();
       webSpeechTranscript.clearTranscript();
       dualAudioTranscript.clearTranscript();
@@ -590,11 +675,41 @@ export default function StandardMode({ onBack }) {
         )}
       </div>
 
-      <div className="feedback-slot" aria-live="polite">
+      <div className="feedback-slot" aria-live="polite" hidden={!(transcriptError || aiError || windowsCaptionsWindowError || localError)}>
         {(transcriptError || aiError || windowsCaptionsWindowError || localError) && (
           <div className="error-box">⚠️ {transcriptError || aiError || windowsCaptionsWindowError || localError}</div>
         )}
       </div>
+
+      <div className="runtime-status-bar">
+        <span className="runtime-badge">Provider: {runtimeProviderLabel}</span>
+        <span className="runtime-badge">Source: {runtimeSourceLabel}</span>
+        <span className="runtime-badge">Status: {runtimeStatusLabel}</span>
+        {runtime.diagnostics.windowsLiveCaptionsRunning && (
+          <span className="runtime-badge">
+            LiveCaptions {runtime.diagnostics.windowsLiveCaptionsHidden ? 'Hidden' : 'Visible'}
+          </span>
+        )}
+        {runtime.diagnostics.localWhisperHealthy && (
+          <span className="runtime-badge">LocalWhisper Ready</span>
+        )}
+        {runtime.diagnostics.localWhisperLeaseCount > 0 && (
+          <span className="runtime-badge">Local Lease: {runtime.diagnostics.localWhisperLeaseCount}</span>
+        )}
+      </div>
+
+      {(runtime.lastError || runtime.diagnostics.localWhisperHealthUrl) && (
+        <div className="runtime-detail-box">
+          {runtime.lastError && (
+            <div className="runtime-detail-line">Last error: {runtime.lastError}</div>
+          )}
+          {runtime.diagnostics.localWhisperHealthUrl && (
+            <div className="runtime-detail-line">
+              Local health: {runtime.diagnostics.localWhisperHealthUrl}
+            </div>
+          )}
+        </div>
+      )}
 
       {isRunning && canToggleWindowsLiveCaptionsWindow && (
         <div className="caption-control-bar">
@@ -611,7 +726,7 @@ export default function StandardMode({ onBack }) {
                 : 'Hide Live Captions'}
           </button>
           <span className="caption-control-note">
-            Windows 11 24H2 is more stable if captions stay visible until text starts flowing.
+            Windows Live Captions uses Windows accessibility capture, so keeping it visible until text starts flowing is more reliable.
           </span>
         </div>
       )}

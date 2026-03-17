@@ -90,6 +90,34 @@
   font-weight: 400;
 }
 
+.setup-note {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.btn-link {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: #a78bfa;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.btn-link:hover {
+  color: #c4b5fd;
+}
+
+.advanced-caption-options {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 4px 10px 10px;
+}
+
 .lang-checkbox-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -149,5 +177,25 @@
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+}
+
+/* ── Auth entry point ────────────────────────────────────────────────────── */
+
+.btn-auth-entry {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 8px 12px;
+  text-align: center;
+  transition: color 0.2s, border-color 0.2s;
+  width: 100%;
+}
+
+.btn-auth-entry:hover {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.35);
 }
 

@@ -109,7 +109,7 @@ async function runCase({ mode, providerLabel, expectedText, screenshotName }) {
 
       const page = await electronApp.firstWindow();
       await page.waitForLoadState('domcontentloaded');
-      await page.getByRole('heading', { name: 'Interview Setup' }).waitFor({ state: 'visible' });
+      await page.getByRole('heading', { name: 'Caption Mode Setup' }).waitFor({ state: 'visible' });
       await page.getByLabel('Transcription Provider').selectOption(mode);
       await page.locator('button.btn-primary').click();
 

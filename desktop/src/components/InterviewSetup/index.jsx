@@ -1,10 +1,12 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
 import { AI_PROVIDERS, TOPICS, LANGUAGES } from '../../constants';
 import './InterviewSetup.css';
 
-export default function InterviewSetup({ onStart }) {
-  const { setup, updateSetup } = useInterviewStore();
+export default function InterviewSetup({ onStart, onAuth }) {
+  const { setup, updateSetup, auth } = useInterviewStore();
+  const isAuthenticated = !!auth.token && !!auth.user;
+  const [showAdvancedCaptions, setShowAdvancedCaptions] = useState(false);
   const selectedProvider = setup.aiProvider || 'openai';
   const autoHideWindowsLiveCaptions = setup.autoHideWindowsLiveCaptions === true;
   const windowsLiveCaptionsIncludeMicrophoneAudio =
@@ -35,8 +37,8 @@ export default function InterviewSetup({ onStart }) {
 
   return (
     <div className="setup-panel">
-      <h2 className="setup-title">Interview Setup</h2>
-      <p className="setup-subtitle">Configure your interview preferences below.</p>
+      <h2 className="setup-title">Caption Mode Setup</h2>
+      <p className="setup-subtitle">Choose the caption and answer settings you need right now.</p>
 
       <div className="form-group">
         <label className="form-label" htmlFor="setup-ai-provider">AI Provider</label>
@@ -60,28 +62,42 @@ export default function InterviewSetup({ onStart }) {
           value={setup.sttProvider || 'auto'}
           onChange={handleChange('sttProvider')}
         >
-          <option value="auto">Auto (System: OpenAI -> Local -> Gemini -> Windows Live Captions fallback)</option>
-          <option value="windows-live-captions">Windows Live Captions (System only, Win11)</option>
+          <option value="auto">Auto (OpenAI -> Local -> Gemini, then Windows Live Captions for system fallback)</option>
+          <option value="windows-live-captions">Windows Live Captions (Windows 11 accessibility capture)</option>
           <option value="local">Local Whisper Service (no cloud)</option>
           <option value="openai">OpenAI (Whisper)</option>
           <option value="gemini">Gemini (best effort)</option>
         </select>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={autoHideWindowsLiveCaptions}
-            onChange={(e) => updateSetup({ autoHideWindowsLiveCaptions: e.target.checked })}
-          />
-          <span>Auto-hide Windows Live Captions after captions begin flowing (experimental; runtime Hide/Show button is more stable)</span>
-        </label>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={windowsLiveCaptionsIncludeMicrophoneAudio}
-            onChange={(e) => updateSetup({ windowsLiveCaptionsIncludeMicrophoneAudio: e.target.checked })}
-          />
-          <span>Auto-enable "Include microphone audio" for Windows Live Captions in Mic + System mode</span>
-        </label>
+        <p className="setup-note">
+          Windows Live Captions is best-effort on Windows 11 and depends on the OS accessibility layer, not an official transcript API.
+        </p>
+        <button
+          type="button"
+          className="btn-link"
+          onClick={() => setShowAdvancedCaptions((prev) => !prev)}
+        >
+          {showAdvancedCaptions ? 'Hide Live Captions options' : 'Show Live Captions options'}
+        </button>
+        {showAdvancedCaptions && (
+          <div className="advanced-caption-options">
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={autoHideWindowsLiveCaptions}
+                onChange={(e) => updateSetup({ autoHideWindowsLiveCaptions: e.target.checked })}
+              />
+              <span>Auto-hide Live Captions after text starts flowing (experimental)</span>
+            </label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={windowsLiveCaptionsIncludeMicrophoneAudio}
+                onChange={(e) => updateSetup({ windowsLiveCaptionsIncludeMicrophoneAudio: e.target.checked })}
+              />
+              <span>Try to enable “Include microphone audio” automatically</span>
+            </label>
+          </div>
+        )}
       </div>
 
       <div className="form-group">
@@ -146,6 +162,12 @@ export default function InterviewSetup({ onStart }) {
 
       <button className="btn-primary" onClick={onStart}>
         Continue to Session Settings →
+      </button>
+
+      <button className="btn-auth-entry" onClick={onAuth}>
+        {isAuthenticated
+          ? `${auth.user.name || auth.user.email} · Account & Billing`
+          : 'Sign In / Create Account'}
       </button>
     </div>
   );

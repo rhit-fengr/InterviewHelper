@@ -5,6 +5,8 @@ import SessionSettings from './components/SessionSettings';
 import MoreSettings from './components/MoreSettings';
 import StandardMode from './components/StandardMode';
 import UndetectableMode from './components/UndetectableMode';
+import AuthPanel from './components/AuthPanel';
+import BillingPanel from './components/BillingPanel';
 import { useInterviewStore } from './store/interviewStore';
 
 const VIEWS = {
@@ -13,6 +15,8 @@ const VIEWS = {
   MORE: 'more',
   STANDARD: 'standard',
   UNDETECTABLE: 'undetectable',
+  AUTH: 'auth',
+  BILLING: 'billing',
 };
 
 export default function App() {
@@ -44,7 +48,10 @@ export default function App() {
       <TitleBar />
       <div className="app-content">
         {view === VIEWS.SETUP && (
-          <InterviewSetup onStart={() => navigate(VIEWS.SESSION)} />
+          <InterviewSetup
+            onStart={() => navigate(VIEWS.SESSION)}
+            onAuth={() => navigate(VIEWS.AUTH)}
+          />
         )}
         {view === VIEWS.SESSION && (
           <SessionSettings
@@ -62,6 +69,17 @@ export default function App() {
         )}
         {view === VIEWS.UNDETECTABLE && (
           <UndetectableMode onBack={() => navigate(VIEWS.SESSION)} />
+        )}
+        {view === VIEWS.AUTH && (
+          <AuthPanel
+            onBack={() => navigate(VIEWS.SETUP)}
+            onBilling={() => navigate(VIEWS.BILLING)}
+          />
+        )}
+        {view === VIEWS.BILLING && (
+          <BillingPanel
+            onBack={() => navigate(VIEWS.AUTH)}
+          />
         )}
       </div>
     </div>

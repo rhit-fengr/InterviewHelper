@@ -81,7 +81,7 @@ async function main() {
 
     const page = await electronApp.firstWindow();
     await page.waitForLoadState('domcontentloaded');
-    await page.getByRole('heading', { name: 'Interview Setup' }).waitFor({ state: 'visible' });
+    await page.getByRole('heading', { name: 'Caption Mode Setup' }).waitFor({ state: 'visible' });
     await page.locator('button.btn-primary').click();
 
     await page.getByRole('heading', { name: 'Session Settings' }).waitFor({ state: 'visible' });

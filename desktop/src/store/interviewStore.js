@@ -76,6 +76,39 @@ export const useInterviewStore = create(
         hideFromScreenSharing: false,
       },
 
+      // ── Auth State (persisted) ───────────────────────────────────────────
+      auth: {
+        token: '',
+        user: null,
+        loading: false,
+        error: '',
+      },
+
+      // ── Runtime State (transient, not persisted) ──────────────────────────
+      runtime: {
+        activeProvider: 'idle',
+        providerDetail: '',
+        sourceMode: 'idle',
+        status: 'idle',
+        isListening: false,
+        startedAt: null,
+        lastError: '',
+        diagnostics: {
+          platform: '',
+          providerUsed: '',
+          sourceLabel: '',
+          activeLanguage: '',
+          windowsLiveCaptionsRunning: false,
+          windowsLiveCaptionsHidden: false,
+          windowsLiveCaptionsAutoHidePending: false,
+          windowsLiveCaptionsMicrophoneAudioEnabled: false,
+          localWhisperHealthy: false,
+          localWhisperManaged: false,
+          localWhisperLeaseCount: 0,
+          localWhisperHealthUrl: '',
+        },
+      },
+
       // ── Actions ──────────────────────────────────────────────────────────
       updateSetup: (data) =>
         set((state) => ({ setup: { ...state.setup, ...data } })),
@@ -89,7 +122,67 @@ export const useInterviewStore = create(
         set((state) => ({ displaySettings: { ...state.displaySettings, ...data } })),
       updateAdvancedSettings: (data) =>
         set((state) => ({ advancedSettings: { ...state.advancedSettings, ...data } })),
+      
+      // ── Auth Actions ──────────────────────────────────────────────────────
+      setAuth: ({ token, user }) =>
+        set(() => ({ auth: { token: token || '', user: user || null, loading: false, error: '' } })),
+      clearAuth: () =>
+        set(() => ({ auth: { token: '', user: null, loading: false, error: '' } })),
+      setAuthLoading: (loading) =>
+        set((state) => ({ auth: { ...state.auth, loading, error: loading ? '' : state.auth.error } })),
+      setAuthError: (error) =>
+        set((state) => ({ auth: { ...state.auth, error: error || '', loading: false } })),
+      
+      updateRuntime: (data) =>
+        set((state) => ({
+          runtime: {
+            ...state.runtime,
+            ...data,
+            diagnostics: {
+              ...state.runtime.diagnostics,
+              ...(data?.diagnostics || {}),
+            },
+          },
+        })),
+      resetRuntime: () =>
+        set(() => ({
+          runtime: {
+            activeProvider: 'idle',
+            providerDetail: '',
+            sourceMode: 'idle',
+            status: 'idle',
+            isListening: false,
+            startedAt: null,
+            lastError: '',
+            diagnostics: {
+              platform: '',
+              providerUsed: '',
+              sourceLabel: '',
+              activeLanguage: '',
+              windowsLiveCaptionsRunning: false,
+              windowsLiveCaptionsHidden: false,
+              windowsLiveCaptionsAutoHidePending: false,
+              windowsLiveCaptionsMicrophoneAudioEnabled: false,
+              localWhisperHealthy: false,
+              localWhisperManaged: false,
+              localWhisperLeaseCount: 0,
+              localWhisperHealthUrl: '',
+            },
+          },
+        })),
     }),
-    { name: PERSIST_KEY, storage }
+    {
+      name: PERSIST_KEY,
+      storage,
+      partialize: (state) => ({
+        setup: state.setup,
+        session: state.session,
+        personalInfo: state.personalInfo,
+        answerSettings: state.answerSettings,
+        displaySettings: state.displaySettings,
+        advancedSettings: state.advancedSettings,
+        auth: state.auth,
+      }),
+    }
   )
 );

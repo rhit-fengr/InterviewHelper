@@ -33,7 +33,7 @@ describe('ConnectScreen', () => {
     fireEvent.changeText(getByTestId('server-url-input'), 'http://192.168.1.2:4000/');
     fireEvent.changeText(getByTestId('session-code-input'), 'iron-1234');
 
-    act(() => {
+    await act(async () => {
       fireEvent.press(getByTestId('connect-button'));
     });
 

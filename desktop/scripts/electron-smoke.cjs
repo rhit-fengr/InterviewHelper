@@ -80,7 +80,7 @@ async function main() {
 
     await page.waitForLoadState('domcontentloaded');
     await page.waitForSelector('h2');
-    await expectHeading(page, 'Interview Setup');
+    await expectHeading(page, 'Caption Mode Setup');
 
     const aiProvider = page.getByLabel('AI Provider');
     await assertValue(aiProvider, 'openai', 'default AI provider should be OpenAI');

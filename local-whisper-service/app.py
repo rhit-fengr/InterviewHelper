@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +34,9 @@ BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
 BEST_OF = int(os.getenv("WHISPER_BEST_OF", "1"))
 LOG_PROB_THRESHOLD = float(os.getenv("WHISPER_LOG_PROB_THRESHOLD", "-1.2"))
 NO_SPEECH_THRESHOLD = float(os.getenv("WHISPER_NO_SPEECH_THRESHOLD", "0.6"))
-COMPRESSION_RATIO_THRESHOLD = float(os.getenv("WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.6"))
+COMPRESSION_RATIO_THRESHOLD = float(
+    os.getenv("WHISPER_COMPRESSION_RATIO_THRESHOLD", "2.6")
+)
 VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "false").strip().lower() in {
     "1",
     "true",
@@ -41,10 +44,8 @@ VAD_FILTER = os.getenv("WHISPER_VAD_FILTER", "false").strip().lower() in {
     "on",
 }
 RAW_TEMPERATURES = os.getenv("WHISPER_TEMPERATURES", "0.0")
-TEMPERATURES = tuple(
-    float(item.strip())
-    for item in RAW_TEMPERATURES.split(",")
-    if item.strip()
+TEMPERATURES: tuple[float, ...] = tuple(
+    float(item.strip()) for item in RAW_TEMPERATURES.split(",") if item.strip()
 )
 PRELOAD_MODEL = os.getenv("WHISPER_PRELOAD_MODEL", "true").strip().lower() in {
     "1",
@@ -140,7 +141,9 @@ def preload_model_on_startup() -> None:
         LOGGER.exception("Local Whisper model preload failed")
 
 
-def _transcribe_once(model: WhisperModel, tmp_path: str, language: Optional[str], vad_filter: bool) -> str:
+def _transcribe_once(
+    model: WhisperModel, tmp_path: str, language: Optional[str], vad_filter: bool
+) -> str:
     options = {
         "language": language,
         "task": "transcribe",
@@ -154,7 +157,7 @@ def _transcribe_once(model: WhisperModel, tmp_path: str, language: Optional[str]
         "no_speech_threshold": NO_SPEECH_THRESHOLD,
     }
     if TEMPERATURES:
-        options["temperature"] = list(TEMPERATURES) if len(TEMPERATURES) > 1 else TEMPERATURES[0]
+        options["temperature"] = list(TEMPERATURES)
 
     try:
         segments, _info = model.transcribe(tmp_path, **options)
@@ -206,6 +209,7 @@ async def transcribe(
 
     suffix = Path(audio.filename or "chunk.webm").suffix or ".webm"
     tmp_path = None
+    started_at = time.perf_counter()
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
@@ -228,15 +232,31 @@ async def transcribe(
                     attempt_lang,
                     attempt_vad,
                 )
+                latency_ms = int((time.perf_counter() - started_at) * 1000)
+                LOGGER.info(
+                    "Transcribed chunk bytes=%s lang=%s vad=%s latencyMs=%s textChars=%s",
+                    len(content),
+                    attempt_lang or "auto",
+                    attempt_vad,
+                    latency_ms,
+                    len(text),
+                )
                 return JSONResponse({"text": text})
             except Exception as exc:
                 last_error = exc
                 # For broken/incomplete chunks, skip instead of interrupting the session.
                 if _is_recoverable_chunk_error(exc):
-                    LOGGER.warning("Skipping undecodable chunk: %s", exc)
+                    LOGGER.warning(
+                        "Skipping undecodable chunk bytes=%s lang=%s vad=%s error=%s",
+                        len(content),
+                        attempt_lang or "auto",
+                        attempt_vad,
+                        exc,
+                    )
                     return JSONResponse({"text": ""})
                 LOGGER.warning(
-                    "Transcribe attempt failed (lang=%s, vad=%s): %s",
+                    "Transcribe attempt failed bytes=%s (lang=%s, vad=%s): %s",
+                    len(content),
                     attempt_lang,
                     attempt_vad,
                     exc,
@@ -250,7 +270,9 @@ async def transcribe(
             LOGGER.warning("Skipping chunk after fallback attempts: %s", exc)
             return JSONResponse({"text": ""})
         LOGGER.exception("Unhandled transcription error")
-        raise HTTPException(status_code=500, detail=f"transcription failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"transcription failed: {exc}"
+        ) from exc
     finally:
         if tmp_path:
             try:
@@ -260,4 +282,6 @@ async def transcribe(
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("LOCAL_WHISPER_PORT", "8765")))
+    uvicorn.run(
+        app, host="127.0.0.1", port=int(os.getenv("LOCAL_WHISPER_PORT", "8765"))
+    )

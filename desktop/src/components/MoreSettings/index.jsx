@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
 import {
   BEHAVIORAL_STRUCTURES,
@@ -6,6 +6,7 @@ import {
   ANSWER_LENGTHS,
   DETECTION_SENSITIVITIES,
 } from '../../constants';
+import { getProfile, updateProfile } from '../../utils/api';
 import './MoreSettings.css';
 
 export default function MoreSettings({ onBack }) {
@@ -14,7 +15,44 @@ export default function MoreSettings({ onBack }) {
     answerSettings, updateAnswerSettings,
     displaySettings, updateDisplaySettings,
     advancedSettings, updateAdvancedSettings,
+    auth,
   } = useInterviewStore();
+
+  const isAuthenticated = !!auth.token && !!auth.user;
+  const [syncStatus, setSyncStatus] = useState(''); // '', 'pushing', 'pulling', 'push-ok', 'pull-ok', 'error'
+  const [syncError, setSyncError] = useState('');
+
+  const handleSyncUp = useCallback(async () => {
+    setSyncStatus('pushing');
+    setSyncError('');
+    try {
+      await updateProfile(auth.token, {
+        name: personalInfo.fullName,
+        personalInfo,
+      });
+      setSyncStatus('push-ok');
+    } catch (err) {
+      setSyncStatus('error');
+      setSyncError(err.message || 'Failed to sync profile');
+    }
+  }, [auth.token, personalInfo]);
+
+  const handlePullDown = useCallback(async () => {
+    setSyncStatus('pulling');
+    setSyncError('');
+    try {
+      const remote = await getProfile(auth.token);
+      const merged = { ...(remote.personalInfo || {}) };
+      if (remote.name) {
+        merged.fullName = remote.name;
+      }
+      updatePersonalInfo(merged);
+      setSyncStatus('pull-ok');
+    } catch (err) {
+      setSyncStatus('error');
+      setSyncError(err.message || 'Failed to pull profile');
+    }
+  }, [auth.token, updatePersonalInfo]);
 
   const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron;
   const desktopOnlyDisabled = !isElectron;
@@ -96,6 +134,41 @@ export default function MoreSettings({ onBack }) {
           />
         </div>
       </section>
+
+      {/* Profile Sync (authenticated only) */}
+      {isAuthenticated && (
+        <section className="settings-section sync-section">
+          <h3 className="section-title">Profile Sync</h3>
+          <p className="sync-hint">
+            Sync your local profile with your server account ({auth.user.email}).
+          </p>
+          <div className="sync-actions">
+            <button
+              className="btn-secondary sync-btn"
+              onClick={handleSyncUp}
+              disabled={syncStatus === 'pushing' || syncStatus === 'pulling'}
+            >
+              {syncStatus === 'pushing' ? 'Syncing…' : 'Sync Profile to Server'}
+            </button>
+            <button
+              className="btn-secondary sync-btn"
+              onClick={handlePullDown}
+              disabled={syncStatus === 'pushing' || syncStatus === 'pulling'}
+            >
+              {syncStatus === 'pulling' ? 'Pulling…' : 'Pull from Server'}
+            </button>
+          </div>
+          {syncStatus === 'push-ok' && (
+            <div className="sync-feedback sync-feedback--success">Profile synced to server.</div>
+          )}
+          {syncStatus === 'pull-ok' && (
+            <div className="sync-feedback sync-feedback--success">Profile updated from server.</div>
+          )}
+          {syncStatus === 'error' && (
+            <div className="sync-feedback sync-feedback--error">{syncError}</div>
+          )}
+        </section>
+      )}
 
       {/* Answer Settings */}
       <section className="settings-section">

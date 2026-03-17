@@ -1,7 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -27,6 +27,7 @@ let windowsLiveCaptionsMicAudioCache = {
   enabled: false,
   verifiedAt: 0,
 };
+let windowsLiveCaptionsManaged = false;
 
 const LOCAL_WHISPER_HEALTH_URL = String(
   process.env.LOCAL_WHISPER_HEALTH_URL || 'http://127.0.0.1:8765/health'
@@ -180,6 +181,95 @@ async function waitForWindowsLiveCaptionsRunning(timeoutMs = 12_000, pollMs = 40
     await sleep(Math.max(100, pollMs));
   }
   return false;
+}
+
+function resetWindowsLiveCaptionsManagement() {
+  windowsLiveCaptionsManaged = false;
+}
+
+function stopManagedWindowsLiveCaptionsSync() {
+  if (!windowsLiveCaptionsManaged) {
+    return {
+      ok: true,
+      stopped: false,
+      managed: false,
+      message: 'Windows Live Captions was not launched by this app.',
+    };
+  }
+
+  try {
+    const result = spawnSync('taskkill', ['/IM', 'LiveCaptions.exe', '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    if (result.error) {
+      return {
+        ok: false,
+        stopped: false,
+        managed: true,
+        message: result.error.message || 'Failed to close Windows Live Captions.',
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      stopped: false,
+      managed: true,
+      message: error?.message || 'Failed to close Windows Live Captions.',
+    };
+  }
+
+  resetWindowsLiveCaptionsManagement();
+  windowsLiveCaptionsMicAudioCache = {
+    enabled: false,
+    verifiedAt: 0,
+  };
+  return {
+    ok: true,
+    stopped: true,
+    managed: false,
+    message: 'Windows Live Captions was closed.',
+  };
+}
+
+async function stopManagedWindowsLiveCaptions() {
+  const running = await isWindowsLiveCaptionsRunning();
+  if (!running || !windowsLiveCaptionsManaged) {
+    return {
+      ok: true,
+      stopped: false,
+      running,
+      managed: windowsLiveCaptionsManaged,
+      message: windowsLiveCaptionsManaged
+        ? 'Windows Live Captions is not running.'
+        : 'Windows Live Captions was not launched by this app.',
+    };
+  }
+
+  try {
+    await runCommand('taskkill', ['/IM', 'LiveCaptions.exe', '/T', '/F'], 8000);
+  } catch (error) {
+    return {
+      ok: false,
+      stopped: false,
+      running: true,
+      managed: true,
+      message: error?.message || 'Failed to close Windows Live Captions.',
+    };
+  }
+
+  resetWindowsLiveCaptionsManagement();
+  windowsLiveCaptionsMicAudioCache = {
+    enabled: false,
+    verifiedAt: 0,
+  };
+  return {
+    ok: true,
+    stopped: true,
+    running: false,
+    managed: false,
+    message: 'Windows Live Captions was closed.',
+  };
 }
 
 async function setWindowsLiveCaptionsMicrophoneAudioEnabled(enabled = true) {
@@ -741,6 +831,7 @@ async function ensureWindowsLiveCaptions(options = {}) {
         if (running) {
           launched = true;
           launchMethod = 'process';
+          windowsLiveCaptionsManaged = true;
         }
       }
 
@@ -750,6 +841,7 @@ async function ensureWindowsLiveCaptions(options = {}) {
         if (running) {
           launched = true;
           launchMethod = 'hotkey';
+          windowsLiveCaptionsManaged = true;
         }
       }
     }
@@ -815,6 +907,7 @@ async function ensureWindowsLiveCaptions(options = {}) {
       running: true,
       hidden,
       autoHidePending,
+      managed: windowsLiveCaptionsManaged,
       microphoneAudioEnabled,
       launchMethod,
       shown,
@@ -974,7 +1067,9 @@ async function ensureLocalWhisper() {
     return {
       ok: true,
       status: localWhisperManaged ? 'managed-running' : 'external-running',
+      managed: localWhisperManaged,
       leaseCount: localWhisperLeaseCount,
+      healthUrl: LOCAL_WHISPER_HEALTH_URL,
     };
   }
 
@@ -1009,7 +1104,9 @@ async function ensureLocalWhisper() {
     return {
       ok: true,
       status: 'managed-started',
+      managed: true,
       leaseCount: localWhisperLeaseCount,
+      healthUrl: LOCAL_WHISPER_HEALTH_URL,
     };
   } catch (err) {
     localWhisperLeaseCount = Math.max(0, localWhisperLeaseCount - 1);
@@ -1017,7 +1114,9 @@ async function ensureLocalWhisper() {
     return {
       ok: false,
       status: 'failed',
+      managed: false,
       leaseCount: localWhisperLeaseCount,
+      healthUrl: LOCAL_WHISPER_HEALTH_URL,
       message: err?.message || 'Failed to start local whisper service.',
     };
   }
@@ -1031,7 +1130,9 @@ function releaseLocalWhisper() {
   return {
     ok: true,
     status: localWhisperManaged ? 'managed-running' : 'idle',
+    managed: localWhisperManaged,
     leaseCount: localWhisperLeaseCount,
+    healthUrl: LOCAL_WHISPER_HEALTH_URL,
   };
 }
 
@@ -1093,6 +1194,12 @@ function createWindow() {
   }
 }
 
+function cleanupManagedResources() {
+  localWhisperLeaseCount = 0;
+  stopManagedLocalWhisper();
+  stopManagedWindowsLiveCaptionsSync();
+}
+
 app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     try {
@@ -1121,13 +1228,12 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  stopManagedLocalWhisper();
+  cleanupManagedResources();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
-  localWhisperLeaseCount = 0;
-  stopManagedLocalWhisper();
+  cleanupManagedResources();
 });
 
 // ── IPC: Window control ────────────────────────────────────────────────────
@@ -1222,6 +1328,8 @@ ipcMain.handle('show-windows-live-captions', async () => ({
   ok: await showWindowsLiveCaptionsWindow(),
 }));
 
+ipcMain.handle('stop-windows-live-captions', async () => stopManagedWindowsLiveCaptions());
+
 async function capturePrimaryScreen(options = {}) {
   const excludeAppWindow = options?.excludeAppWindow !== false;
   const display = screen.getPrimaryDisplay();
@@ -1283,6 +1391,7 @@ ipcMain.handle('capture-primary-screen', async (_event, options) => (
 ipcMain.handle('windows-live-captions-status', async () => ({
   supported: supportsWindowsLiveCaptions(),
   running: await isWindowsLiveCaptionsRunning(),
+  managed: windowsLiveCaptionsManaged,
   ...(await getWindowsLiveCaptionsWindowState()),
   platform: process.platform,
   build: getWindowsBuildNumber(),

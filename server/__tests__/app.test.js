@@ -2,6 +2,11 @@
 
 const request = require('supertest');
 const app = require('../app');
+const { resetAuthState } = require('../services/auth.service');
+
+beforeEach(() => {
+  resetAuthState();
+});
 
 describe('Health endpoint', () => {
   it('GET /health returns ok', async () => {
@@ -42,8 +47,19 @@ describe('Session routes', () => {
 });
 
 describe('User routes', () => {
+  let token;
+
+  beforeEach(async () => {
+    const registerRes = await request(app)
+      .post('/api/user/register')
+      .send({ email: 'jane@example.com', password: 'password123', name: 'Jane Doe' });
+    token = registerRes.body.token;
+  });
+
   it('GET /api/user/profile returns profile', async () => {
-    const res = await request(app).get('/api/user/profile');
+    const res = await request(app)
+      .get('/api/user/profile')
+      .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(res.body.id).toBeDefined();
   });
@@ -52,10 +68,11 @@ describe('User routes', () => {
     const personalInfo = { fullName: 'Jane Doe', currentRole: 'Engineer' };
     const res = await request(app)
       .put('/api/user/profile')
+      .set('Authorization', `Bearer ${token}`)
       .send({ personalInfo });
     expect(res.status).toBe(200);
     expect(res.body.updated).toBe(true);
-    expect(res.body.personalInfo.fullName).toBe('Jane Doe');
+    expect(res.body.user.personalInfo.fullName).toBe('Jane Doe');
   });
 });
 

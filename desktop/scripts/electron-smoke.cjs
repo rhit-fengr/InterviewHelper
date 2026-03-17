@@ -116,7 +116,7 @@ async function main() {
 
     await page.getByText('Detected Question').waitFor({ state: 'visible' });
     await page.getByText(question, { exact: true }).waitFor({ state: 'visible' });
-    await page.getByText('Answer').waitFor({ state: 'visible' });
+    await page.locator('.answer-box .box-label').waitFor({ state: 'visible' });
     await page.getByText(mockedAnswer, { exact: true }).waitFor({ state: 'visible' });
     await page.getByText('Conversation History').waitFor({ state: 'visible' });
 

@@ -4,6 +4,7 @@ const express = require('express');
 const multer = require('multer');
 const {
   generateAnswer,
+  generateScreenshotAnswer,
   detectQuestion,
   getProviderCooldownRemainingMs,
   normalizeProvider,
@@ -18,9 +19,14 @@ const router = express.Router();
 const MAX_QUESTION_CHARS = Number(process.env.AI_MAX_QUESTION_CHARS || 1600);
 const MAX_TRANSCRIPT_CHARS = Number(process.env.AI_MAX_TRANSCRIPT_CHARS || 2400);
 const ENABLE_PROVIDER_FAILOVER = process.env.AI_ENABLE_PROVIDER_FAILOVER !== 'false';
+const SCREENSHOT_MAX_BYTES = Number(process.env.AI_SCREENSHOT_MAX_BYTES || 8 * 1024 * 1024);
 const transcribeUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: AI_TRANSCRIBE_MAX_BYTES },
+});
+const screenshotUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SCREENSHOT_MAX_BYTES },
 });
 
 function clipTail(text, maxChars) {
@@ -28,6 +34,15 @@ function clipTail(text, maxChars) {
   if (!value) return '';
   const limit = Math.max(1, Number(maxChars) || 1600);
   return value.length <= limit ? value : value.slice(-limit).trim();
+}
+
+function parseJsonField(value, fallbackValue) {
+  if (typeof value !== 'string' || !value.trim()) return fallbackValue;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallbackValue;
+  }
 }
 
 function getAlternativeProvider(provider) {
@@ -215,6 +230,98 @@ router.post('/detect-question', async (req, res) => {
     console.error('[AI detect-question] error:', err);
     res.status(500).json({ error: 'Question detection failed' });
   }
+});
+
+router.post('/answer-screenshot', (req, res, next) => {
+  screenshotUpload.single('image')(req, res, (err) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Screenshot exceeds the maximum allowed size.' });
+    }
+    if (err) return next(err);
+    next();
+  });
+}, async (req, res) => {
+  const provider = getProviderFromRequest(req);
+  if (!isProviderConfigured(provider)) {
+    const keyHint = provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY';
+    return res.status(503).json({
+      error: `AI service (${provider}) is not configured. Set ${keyHint}.`,
+    });
+  }
+
+  if (!req.file?.buffer) {
+    return res.status(400).json({ error: 'screenshot image is required' });
+  }
+
+  const transcript = clipTail(req.body?.transcript, MAX_TRANSCRIPT_CHARS);
+  const personalInfo = parseJsonField(req.body?.personalInfo, {});
+  const answerSettings = parseJsonField(req.body?.answerSettings, {});
+  const setup = parseJsonField(req.body?.setup, {});
+  const conversationHistory = parseJsonField(req.body?.conversationHistory, []);
+
+  let result;
+  let requestError = null;
+  let providerUsed = provider;
+  try {
+    result = await generateScreenshotAnswer({
+      provider,
+      imageBuffer: req.file.buffer,
+      imageMimeType: req.file.mimetype,
+      transcript,
+      personalInfo,
+      answerSettings,
+      setup,
+      conversationHistory,
+    });
+  } catch (err) {
+    requestError = err;
+    if (ENABLE_PROVIDER_FAILOVER && err?.status === 429) {
+      const fallbackProvider = getAlternativeProvider(provider);
+      if (isProviderConfigured(fallbackProvider)) {
+        try {
+          providerUsed = fallbackProvider;
+          result = await generateScreenshotAnswer({
+            provider: fallbackProvider,
+            imageBuffer: req.file.buffer,
+            imageMimeType: req.file.mimetype,
+            transcript,
+            personalInfo,
+            answerSettings,
+            setup,
+            conversationHistory,
+          });
+          console.warn(`[AI answer-screenshot] failover applied: ${provider} -> ${fallbackProvider}`);
+        } catch (fallbackErr) {
+          requestError = fallbackErr;
+        }
+      }
+    }
+  }
+
+  if (!result) {
+    const status = Number(requestError?.status) || 500;
+    if (status === 429) {
+      const cooldownMs = requestError?.retryAfterMs || getProviderCooldownRemainingMs(requestError?.provider || provider);
+      return res.status(429).json({
+        error: `Rate limit reached for ${(requestError?.provider || provider)}. Wait about ${Math.max(1, Math.ceil(cooldownMs / 1000))}s and try again.`,
+      });
+    }
+    if (status === 503) {
+      return res.status(503).json({
+        error: requestError?.message || `AI service (${provider}) is not configured.`,
+      });
+    }
+    console.error('[AI answer-screenshot] error:', requestError);
+    return res.status(status).json({
+      error: requestError?.message || 'Screenshot answer generation failed',
+    });
+  }
+
+  return res.json({
+    question: String(result.question || '').trim(),
+    answer: String(result.answer || '').trim(),
+    providerUsed,
+  });
 });
 
 /**

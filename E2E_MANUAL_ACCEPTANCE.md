@@ -5,6 +5,8 @@
 ## 自动化现状
 
 - 已提供最小 Electron smoke 自动化：`cd desktop && npm run test:electron-smoke`
+- 已提供 Electron `Mic only` provider 回归自动化：`cd desktop && npm run test:mic-only-scenarios`
+- 已提供 Electron `Mic + System + Windows Live Captions` 联合回归：`cd desktop && npm run test:windows-live-captions-scenarios`
 - 已提供双来源音频自动化：`cd desktop && npm run test:audio-scenarios`
 - 已提供一键全自动入口：`cd desktop && npm run test:e2e`
 - 当前自动化覆盖：
@@ -15,10 +17,14 @@
   - AI 流式回答渲染（通过 mock server response）
   - Conversation History 的 `Collapse / Hide / Show`
   - Mic + System 双来源场景
+  - Electron 打包运行时的 `Mic only + local` 与 `Mic only + Windows Live Captions` 主链路
+  - `Mic + System + Windows Live Captions + mic-assist` 的联合转写主链路
   - 带真实语音内容的固定 WAV 素材
   - 固定音频素材的时间编排、重叠播放和跨来源去重
   - 通过虚拟媒体流驱动原生 `MediaRecorder` 录制链路
   - 自动问题检测与自动回答在双来源模式下的主链路
+  - Windows Live Captions 空字幕 warning 的防误报回归
+  - Windows Live Captions 线路下避免再并行跑独立 mic 云端 STT 的回归
 - 当前仍建议保留人工验收：
   - 真实麦克风输入、系统音频捕获、Windows Live Captions 联动
   - 屏幕共享保护在 Zoom / Teams / Meet / OBS 中的真实表现
@@ -85,6 +91,8 @@ npm start
 ```bash
 cd desktop
 npm run test:electron-smoke
+npm run test:mic-only-scenarios
+npm run test:windows-live-captions-scenarios
 npm run test:audio-scenarios
 npm run test:e2e
 ```
@@ -92,7 +100,11 @@ npm run test:e2e
 预期：
 - Electron 窗口能直接从本地 build 启动，不依赖手工打开 `localhost:3000`
 - 自动完成 Setup -> Session -> Standard Mode 主链路
+- 自动覆盖 Electron `Mic only` 模式下的 `local` / `windows-live-captions` provider
+- 自动覆盖 `Mic + System + windows-live-captions + mic-assist` 的组合线路
 - 自动生成截图到 `output/playwright/electron-smoke.png`
+- 自动生成 `Mic only` 截图到 `output/playwright/electron-mic-only-local.png`
+- 自动生成 WLC 组合线路截图到 `output/playwright/electron-wlc-mic-system.png`
 - 自动生成双来源音频截图到 `output/playwright/electron-audio-overlap.png`
 
 ---

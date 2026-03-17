@@ -25,7 +25,7 @@ const SAME_SOURCE_DEDUPE_WINDOW_MS = 16_000;
 const MIN_SAME_SOURCE_DEDUPE_CHARS = 10;
 const MAX_SAME_SOURCE_LENGTH_RATIO = 1.35;
 const MAX_RECENT_SEGMENTS_PER_SOURCE = 24;
-const WINDOWS_CAPTIONS_EMPTY_POLL_WARNING_THRESHOLD = 8;
+const WINDOWS_CAPTIONS_EMPTY_POLL_WARNING_THRESHOLD = 18;
 
 function pickRecorderMimeType(provider = 'openai') {
   if (typeof MediaRecorder === 'undefined') return '';
@@ -169,6 +169,7 @@ export function useDualAudioTranscript({
   captureSystem = true,
   onTranscriptChange,
   onFinalSegment,
+  onWindowsLiveCaptionsStatusChange,
 } = {}) {
   const languageKey = Array.isArray(language)
     ? language.map((item) => String(item || '').trim()).join('|')
@@ -188,6 +189,7 @@ export function useDualAudioTranscript({
   const lastSegmentsBySourceRef = useRef({ mic: '', system: '' });
   const onChangeRef = useRef(onTranscriptChange);
   const onFinalSegmentRef = useRef(onFinalSegment);
+  const onWindowsLiveCaptionsStatusChangeRef = useRef(onWindowsLiveCaptionsStatusChange);
   const enabledRef = useRef(enabled);
   const transcribeInFlightRef = useRef({ mic: false, system: false });
   const pendingChunkBySourceRef = useRef({ mic: null, system: null });
@@ -199,6 +201,8 @@ export function useDualAudioTranscript({
   const recentSegmentsBySourceRef = useRef({ mic: [], system: [] });
   const windowsCaptionsPollTimerRef = useRef(null);
   const windowsCaptionsEmptyPollCountRef = useRef(0);
+  const windowsCaptionsHasReadableSegmentRef = useRef(false);
+  const windowsCaptionsAutoHidePendingRef = useRef(false);
   const requestDataTimersRef = useRef({ mic: null, system: null });
 
   useEffect(() => {
@@ -208,6 +212,10 @@ export function useDualAudioTranscript({
   useEffect(() => {
     onFinalSegmentRef.current = onFinalSegment;
   }, [onFinalSegment]);
+
+  useEffect(() => {
+    onWindowsLiveCaptionsStatusChangeRef.current = onWindowsLiveCaptionsStatusChange;
+  }, [onWindowsLiveCaptionsStatusChange]);
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -270,6 +278,8 @@ export function useDualAudioTranscript({
     pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
     recentSegmentsBySourceRef.current = { mic: [], system: [] };
     windowsCaptionsEmptyPollCountRef.current = 0;
+    windowsCaptionsHasReadableSegmentRef.current = false;
+    windowsCaptionsAutoHidePendingRef.current = false;
     timeoutFailureCountRef.current = 0;
 
     setIsListening(false);
@@ -317,7 +327,13 @@ export function useDualAudioTranscript({
       const providerUsed = String(body?.providerUsed || '').trim().toLowerCase();
       const cleanedSegment = sanitizeTranscriptSegment(String(body?.text || ''));
       if (!cleanedSegment) {
-        if (sourceFromServer === 'system' && providerUsed === 'windows-live-captions') {
+        if (
+          sourceFromServer === 'system'
+          && providerUsed === 'windows-live-captions'
+          && effectiveTranscribeProvider === 'windows-live-captions'
+          && !captureMic
+          && !windowsCaptionsHasReadableSegmentRef.current
+        ) {
           windowsCaptionsEmptyPollCountRef.current += 1;
           if (windowsCaptionsEmptyPollCountRef.current >= WINDOWS_CAPTIONS_EMPTY_POLL_WARNING_THRESHOLD) {
             setError(
@@ -329,6 +345,27 @@ export function useDualAudioTranscript({
       }
       if (sourceFromServer === 'system' && providerUsed === 'windows-live-captions') {
         windowsCaptionsEmptyPollCountRef.current = 0;
+        windowsCaptionsHasReadableSegmentRef.current = true;
+        if (
+          windowsCaptionsAutoHidePendingRef.current
+          && window?.electronAPI?.hideWindowsLiveCaptions
+        ) {
+          windowsCaptionsAutoHidePendingRef.current = false;
+          try {
+            const hideResult = await window.electronAPI.hideWindowsLiveCaptions();
+            onWindowsLiveCaptionsStatusChangeRef.current?.({
+              running: true,
+              hidden: hideResult?.ok === true,
+              autoHidePending: false,
+            });
+          } catch {
+            onWindowsLiveCaptionsStatusChangeRef.current?.({
+              running: true,
+              hidden: false,
+              autoHidePending: false,
+            });
+          }
+        }
       }
       if (cleanedSegment === lastSegmentsBySourceRef.current[sourceFromServer]) return;
 
@@ -353,7 +390,7 @@ export function useDualAudioTranscript({
         }
       }
 
-      if (sourceFromServer === 'system' && includeWindowsLiveCaptionsMicrophoneAudio) {
+      if (sourceFromServer === 'system') {
         const recentMic = recentSegmentsBySourceRef.current.mic || [];
         const hasMicDuplicate = recentMic.some((entry) => (
           now - entry.at <= CROSS_SOURCE_DEDUPE_WINDOW_MS
@@ -412,7 +449,7 @@ export function useDualAudioTranscript({
         setError(`${TRANSCRIBE_ERROR_PREFIX} ${message}`);
       }
     }
-  }, [languages, primaryLanguage, provider, transcribeProvider, stopCapture]);
+  }, [captureMic, languages, primaryLanguage, provider, transcribeProvider, stopCapture]);
 
   const drainPendingChunks = useCallback((sourceMode) => {
     if (!enabledRef.current) return;
@@ -485,8 +522,19 @@ export function useDualAudioTranscript({
         if (shouldEnsureWindowsLiveCaptions) {
           const ensureResult = await window.electronAPI.ensureWindowsLiveCaptions({
             autoHide: autoHideWindowsLiveCaptions === true,
+            deferAutoHide: true,
             includeMicrophoneAudio: includeWindowsLiveCaptionsMicrophoneAudio === true,
             silent: normalizedSystemTranscribeProvider !== 'windows-live-captions',
+          });
+          windowsCaptionsAutoHidePendingRef.current = Boolean(
+            ensureResult?.ok
+            && ensureResult?.autoHidePending
+          );
+          onWindowsLiveCaptionsStatusChangeRef.current?.({
+            running: ensureResult?.ok === true,
+            hidden: ensureResult?.hidden === true,
+            autoHidePending: windowsCaptionsAutoHidePendingRef.current,
+            microphoneAudioEnabled: ensureResult?.microphoneAudioEnabled !== false,
           });
           if (!ensureResult?.ok && normalizedSystemTranscribeProvider === 'windows-live-captions') {
             throw new Error(
@@ -497,6 +545,7 @@ export function useDualAudioTranscript({
             ensureResult?.ok
             && includeWindowsLiveCaptionsMicrophoneAudio === true
             && ensureResult?.microphoneAudioEnabled === false
+            && !captureMic
           ) {
             setError(
               'Windows Live Captions started, but "Include microphone audio" could not be enabled automatically. You can enable it manually from Preferences.'

@@ -3,16 +3,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { pathToFileURL } = require('node:url');
 const { _electron: electron } = require('playwright');
 
 const desktopDir = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(desktopDir, '..');
 const artifactsDir = path.join(repoRoot, 'output', 'playwright');
-const screenshotPath = path.join(artifactsDir, 'electron-audio-overlap.png');
-const scenarioPath = path.join(artifactsDir, 'audio-overlap-scenario.json');
 const fixtureManifestPath = path.join(desktopDir, 'test-assets', 'audio', 'manifest.json');
-const answerText = 'Stay calm, prioritize the signal, and explain tradeoffs clearly while I execute.';
+const screenshotPath = path.join(artifactsDir, 'electron-wlc-mic-system.png');
+const scenarioPath = path.join(artifactsDir, 'wlc-mic-system-scenario.json');
 
 function run(command, args, options = {}) {
   const shellCommand = process.platform === 'win32'
@@ -41,63 +39,39 @@ function run(command, args, options = {}) {
 function buildScenario(fixtures) {
   const fixtureById = Object.fromEntries(fixtures.map((fixture) => [fixture.id, fixture]));
   return {
-    name: 'dual-source-overlap',
-    fixtures: fixtures.map((fixture) => ({
-      ...fixture,
-      fileUrl: pathToFileURL(fixture.filePath).href,
-    })),
+    name: 'windows-live-captions-mic-system-combined',
+    fixtures,
     capture: {
+      mic: {
+        emissions: [],
+      },
       system: {
+        eager: true,
         emissions: [
           {
             fixtureId: fixtureById['system-question-stereo'].id,
-            atMs: 350,
-            delayMs: 80,
-            channelCount: fixtureById['system-question-stereo'].channelCount,
-            text: 'Tell me about your biggest strength?',
-          },
-          {
-            fixtureId: fixtureById['system-followup-stereo'].id,
-            atMs: 2200,
-            delayMs: 40,
-            channelCount: fixtureById['system-followup-stereo'].channelCount,
-            text: 'How do you handle ambiguity on a fast-moving team?',
-          },
-        ],
-      },
-      mic: {
-        emissions: [
-          {
-            fixtureId: fixtureById['mic-leakage-mono'].id,
-            atMs: 650,
-            delayMs: 20,
-            channelCount: fixtureById['mic-leakage-mono'].channelCount,
-            text: 'Tell me about your biggest strength?',
+            atMs: 320,
+            delayMs: 30,
+            text: fixtureById['system-question-stereo'].text,
           },
           {
             fixtureId: fixtureById['mic-answer-mono'].id,
-            atMs: 1400,
+            atMs: 1800,
             delayMs: 25,
-            channelCount: fixtureById['mic-answer-mono'].channelCount,
-            text: 'My biggest strength is staying calm under pressure and creating clarity for the team.',
+            text: fixtureById['mic-answer-mono'].text,
           },
         ],
       },
     },
     detectQuestion: [
       {
-        contains: 'Tell me about your biggest strength?',
-        question: 'Tell me about your biggest strength?',
-      },
-      {
-        contains: 'How do you handle ambiguity on a fast-moving team?',
-        question: 'How do you handle ambiguity on a fast-moving team?',
+        contains: fixtureById['system-question-stereo'].text,
+        question: fixtureById['system-question-stereo'].text,
       },
     ],
     answer: {
       events: [
-        { data: { text: answerText.slice(0, 38) }, delayMs: 80 },
-        { data: { text: answerText.slice(38) }, delayMs: 60 },
+        { data: { text: 'Mocked answer from the WLC combined scenario.' }, delayMs: 60 },
         { data: { done: true } },
       ],
     },
@@ -114,7 +88,7 @@ async function main() {
 
   let lastError;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interview-helper-audio-e2e-'));
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'interview-helper-wlc-e2e-'));
     let electronApp;
 
     try {
@@ -134,7 +108,7 @@ async function main() {
       await page.waitForLoadState('domcontentloaded');
       await page.getByRole('heading', { name: 'Interview Setup' }).waitFor({ state: 'visible' });
 
-      await page.getByLabel('Transcription Provider').selectOption('openai');
+      await page.getByLabel('Transcription Provider').selectOption('windows-live-captions');
       await page.locator('button.btn-primary').click();
 
       await page.getByRole('heading', { name: 'Session Settings' }).waitFor({ state: 'visible' });
@@ -143,20 +117,25 @@ async function main() {
 
       await page.getByRole('heading', { name: 'Standard Mode' }).waitFor({ state: 'visible' });
       await page.locator('button.btn-toggle').click();
+      await page.getByRole('button', { name: 'Hide Live Captions' }).waitFor({ state: 'visible' });
 
       await waitForBodyText(page, 'Tell me about your biggest strength?');
       await waitForBodyText(page, 'My biggest strength is staying calm under pressure and creating clarity for the team.');
-      await waitForBodyText(page, 'How do you handle ambiguity on a fast-moving team?');
-      await waitForBodyText(page, answerText);
 
-      await page.waitForTimeout(1200);
+      const bodyText = await page.evaluate(() => document.body?.innerText || '');
+      assert(bodyText.includes('Captions=windows-live-captions + mic-assist'), 'expected combined WLC label');
+      assert(!bodyText.includes('Mic=openai -> local -> gemini'), 'WLC combined mode should not keep a separate mic cloud STT label');
+      assert(!bodyText.includes('Rate limit reached while transcribing audio.'), 'WLC combined mode should not surface cloud STT rate limit warnings');
+      assert(!bodyText.includes('Transcription request timed out repeatedly.'), 'WLC combined mode should not surface repeated timeout warnings');
+      assert(!bodyText.includes('Please provide audio file'), 'WLC combined mode should not render backend audio validation errors as transcript text');
+      assert(!bodyText.includes('请提供音频文件'), 'WLC combined mode should not render backend audio validation errors as transcript text');
 
       const transcriptEntries = page.locator('.transcript-entry');
-      await assertHasSingleQuestionEntry(transcriptEntries);
-      await assertSourceTags(page);
+      const entryCount = await transcriptEntries.count();
+      assert(entryCount >= 2, 'expected multiple transcript entries from the combined WLC flow');
 
       await page.screenshot({ path: screenshotPath, fullPage: true });
-      console.log(`Electron audio scenario passed. Screenshot: ${screenshotPath}`);
+      console.log(`Electron Windows Live Captions combined scenario passed. Screenshot: ${screenshotPath}`);
       return;
     } catch (error) {
       lastError = error;
@@ -169,28 +148,6 @@ async function main() {
     }
   }
   throw lastError;
-}
-
-async function assertHasSingleQuestionEntry(transcriptEntries) {
-  const entryCount = await transcriptEntries.count();
-  let occurrences = 0;
-  for (let index = 0; index < entryCount; index += 1) {
-    const text = await transcriptEntries.nth(index).innerText();
-    if (text.includes('Tell me about your biggest strength?')) {
-      occurrences += 1;
-    }
-  }
-  assert.equal(occurrences, 1, 'system question should appear once after cross-source dedupe');
-}
-
-async function assertSourceTags(page) {
-  const bodyText = await page.evaluate(() => document.body?.innerText || '');
-  assert(bodyText.includes('SYSTEM'), 'expected at least one System transcript source tag');
-  assert(bodyText.includes('MIC'), 'expected at least one Mic transcript source tag');
-  assert(
-    !bodyText.includes('Windows Live Captions is running, but no readable subtitle text was captured yet.'),
-    'Mic + System flow should not surface the empty Windows Live Captions warning while transcript text is flowing.'
-  );
 }
 
 async function waitForBodyText(page, text) {

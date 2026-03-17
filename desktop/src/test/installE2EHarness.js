@@ -30,18 +30,26 @@ function createSSEStream(events = []) {
 
 function normalizeConfig(config) {
   const capture = config?.capture || {};
+  const screenshot = config?.screenshot || {};
   return {
     name: String(config?.name || 'unnamed-e2e-scenario'),
     fixtures: Array.isArray(config?.fixtures) ? config.fixtures : [],
     capture: {
       mic: {
+        eager: capture.mic?.eager === true,
         emissions: Array.isArray(capture.mic?.emissions) ? capture.mic.emissions : [],
       },
       system: {
+        eager: capture.system?.eager === true,
         emissions: Array.isArray(capture.system?.emissions) ? capture.system.emissions : [],
       },
     },
     detectQuestion: Array.isArray(config?.detectQuestion) ? config.detectQuestion : [],
+    screenshot: {
+      imageDataUrl: typeof screenshot.imageDataUrl === 'string' ? screenshot.imageDataUrl : '',
+      question: typeof screenshot.question === 'string' ? screenshot.question : '',
+      answer: typeof screenshot.answer === 'string' ? screenshot.answer : '',
+    },
     answer: Array.isArray(config?.answer?.events)
       ? config.answer.events
       : [{ data: { text: 'Mock answer' } }, { data: { done: true } }],
@@ -111,17 +119,45 @@ function createScenarioRuntime(config) {
     mic: [],
     system: [],
   };
+  const scheduledSources = new Set();
+  const debug = {
+    enqueuedBySource: { mic: 0, system: 0 },
+    dequeuedBySource: { mic: 0, system: 0 },
+    lastDequeuedTextBySource: { mic: '', system: '' },
+  };
 
   return {
     fixturesById,
+    debug,
+    scheduleSourceEmissions(sourceMode, emissions = []) {
+      const key = `${sourceMode}`;
+      if (scheduledSources.has(key)) return;
+      scheduledSources.add(key);
+
+      for (const emission of emissions) {
+        setTimeout(() => {
+          this.enqueueTranscript(sourceMode, {
+            text: String(emission.text || fixturesById[emission.fixtureId]?.text || ''),
+            delayMs: Number(emission.delayMs) || 0,
+            fixtureId: emission.fixtureId,
+          });
+        }, Math.max(0, Number(emission.atMs) || 0) + 120);
+      }
+    },
     dequeueTranscript(sourceMode) {
       const queue = transcriptQueues[sourceMode] || [];
-      return queue.length > 0 ? queue.shift() : null;
+      const next = queue.length > 0 ? queue.shift() : null;
+      if (next) {
+        debug.dequeuedBySource[sourceMode] = (debug.dequeuedBySource[sourceMode] || 0) + 1;
+        debug.lastDequeuedTextBySource[sourceMode] = next.text || '';
+      }
+      return next;
     },
     enqueueTranscript(sourceMode, payload) {
       const queue = transcriptQueues[sourceMode] || [];
       queue.push(payload);
       transcriptQueues[sourceMode] = queue;
+      debug.enqueuedBySource[sourceMode] = (debug.enqueuedBySource[sourceMode] || 0) + 1;
     },
   };
 }
@@ -137,6 +173,7 @@ async function createPlaybackStream(sourceMode, emissions, runtime) {
   const destination = audioContext.createMediaStreamDestination();
   const cleanupTimers = [];
   const startAt = audioContext.currentTime + 0.25;
+  runtime.scheduleSourceEmissions(sourceMode, emissions);
 
   for (const emission of emissions) {
     const fixture = runtime.fixturesById[emission.fixtureId];
@@ -157,14 +194,6 @@ async function createPlaybackStream(sourceMode, emissions, runtime) {
     gainNode.connect(destination);
     sourceNode.start(startAt + (Math.max(0, Number(emission.atMs) || 0) / 1000));
 
-    const timer = setTimeout(() => {
-      runtime.enqueueTranscript(sourceMode, {
-        text: String(emission.text || fixture.text || ''),
-        delayMs: Number(emission.delayMs) || 0,
-        fixtureId: emission.fixtureId,
-      });
-    }, Math.max(0, Number(emission.atMs) || 0) + 120);
-    cleanupTimers.push(timer);
   }
 
   let stream;
@@ -198,6 +227,9 @@ async function createPlaybackStream(sourceMode, emissions, runtime) {
 function installMediaDevicesHarness(config) {
   const runtime = createScenarioRuntime(config);
   window.__INTERVIEW_HELPER_E2E_RUNTIME__ = runtime;
+  if (config.capture.system?.eager === true) {
+    runtime.scheduleSourceEmissions('system', config.capture.system.emissions || []);
+  }
 
   const currentMediaDevices = navigator.mediaDevices || {};
   const mediaDevices = {
@@ -258,6 +290,14 @@ function installFetchHarness(config) {
       });
     }
 
+    if (url.includes('/api/ai/answer-screenshot')) {
+      return jsonResponse({
+        question: String(config.screenshot?.question || ''),
+        answer: String(config.screenshot?.answer || 'Mock screenshot answer'),
+        providerUsed: 'mock-e2e',
+      });
+    }
+
     if (url.includes('/api/ai/answer')) {
       return new Response(createSSEStream(config.answer), {
         status: 200,
@@ -272,6 +312,20 @@ function installFetchHarness(config) {
   };
 }
 
+function installElectronHarness(config) {
+  if (!config?.screenshot?.imageDataUrl || !window?.electronAPI) return;
+  try {
+    window.electronAPI.capturePrimaryScreen = async () => ({
+      ok: true,
+      dataUrl: config.screenshot.imageDataUrl,
+      width: 1280,
+      height: 720,
+    });
+  } catch {
+    // Ignore capture override failures and fall back to the real Electron API.
+  }
+}
+
 export function installE2EHarness(rawConfig) {
   if (!rawConfig || rawConfig.error || window.__INTERVIEW_HELPER_E2E_INSTALLED__) {
     return;
@@ -283,4 +337,5 @@ export function installE2EHarness(rawConfig) {
 
   installMediaDevicesHarness(config);
   installFetchHarness(config);
+  installElectronHarness(config);
 }

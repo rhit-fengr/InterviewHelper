@@ -30,9 +30,11 @@ function Is-IgnoredCaptionText([string]$text) {
   if ([string]::IsNullOrWhiteSpace($name)) { return $true }
   if ($name.Length -lt 2) { return $true }
   if ($name.Length -gt 240) { return $true }
-  if ($name -match '^(Live captions|Captions|Settings|Close|Back|Feedback|字幕|设置|關閉|返回)$') { return $true }
+  if ($name -match '^(Live captions|Captions|Settings|Close|Back|Feedback|字幕|设置|設定|偏好设置|偏好設定|首选项|關閉|返回)$') { return $true }
   if ($name -match '(?i)address and search bar|search or type url|ready to show live captions|livecaptions-translator|sakirinn/livecaptions-translator') { return $true }
   if ($name -match '(?i)\bat master\b.*livecaptions-translator') { return $true }
+  if ($name -match '(?i)^(include microphone audio|filter profanity|caption style|position|change language|preferences|learn more|expand subtitles)$') { return $true }
+  if ($name -match '^(包括麦克风音频|包含麦克风音频|包括麥克風音訊|包含麥克風音訊|过滤粗俗语言|过滤脏话|字幕样式|字幕位置|更改语言|展开字幕|展開字幕)$') { return $true }
   $wordCount = ($name -split '\s+').Count
   if ($wordCount -gt 42) { return $true }
   $sentenceMarks = ([regex]::Matches($name, '[.!?。！？]')).Count
@@ -40,14 +42,15 @@ function Is-IgnoredCaptionText([string]$text) {
   return $false
 }
 
-function Get-WindowByProcessId([System.Windows.Automation.AutomationElement]$root, [System.Diagnostics.Process]$process) {
-  if ($null -eq $process) { return $null }
+function Get-WindowCandidatesByProcessId([System.Windows.Automation.AutomationElement]$root, [System.Diagnostics.Process]$process) {
+  $results = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
+  if ($null -eq $process) { return $results }
 
   try {
     $mainHandle = [IntPtr]$process.MainWindowHandle
     if ($mainHandle -ne [IntPtr]::Zero) {
       $window = [System.Windows.Automation.AutomationElement]::FromHandle($mainHandle)
-      if ($null -ne $window) { return $window }
+      if ($null -ne $window) { [void]$results.Add($window) }
     }
   } catch {
     # Continue to fallback.
@@ -63,9 +66,26 @@ function Get-WindowByProcessId([System.Windows.Automation.AutomationElement]$roo
   )
   $windowCondition = New-Object System.Windows.Automation.AndCondition($procCondition, $windowTypeCondition)
 
-  $window = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $windowCondition)
-  if ($null -ne $window) { return $window }
-  return $null
+  $windows = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $windowCondition)
+  if ($null -eq $windows -or $windows.Count -le 0) { return $results }
+
+  for ($i = 0; $i -lt $windows.Count; $i++) {
+    $candidate = $windows[$i]
+    $alreadyAdded = $false
+    foreach ($existing in $results) {
+      try {
+        if ($existing.GetHashCode() -eq $candidate.GetHashCode()) {
+          $alreadyAdded = $true
+          break
+        }
+      } catch {}
+    }
+    if (-not $alreadyAdded) {
+      [void]$results.Add($candidate)
+    }
+  }
+
+  return $results
 }
 
 function Get-NodeCandidateTexts([System.Windows.Automation.AutomationElement]$node) {
@@ -166,24 +186,7 @@ function Extract-CaptionText([System.Windows.Automation.AutomationElement]$windo
     return $directText
   }
 
-  $textCondition = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Text
-  )
-  $documentCondition = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Document
-  )
-  $editCondition = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Edit
-  )
-  $orCondition = New-Object System.Windows.Automation.OrCondition(
-    (New-Object System.Windows.Automation.OrCondition($textCondition, $documentCondition)),
-    $editCondition
-  )
-
-  $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $orCondition)
+  $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
   if ($null -eq $nodes -or $nodes.Count -le 0) { return "" }
 
   $candidates = @()
@@ -219,13 +222,15 @@ function Invoke-CaptionProbe(
     }
   }
 
-  $window = $null
+  $windowCandidates = New-Object System.Collections.Generic.List[System.Windows.Automation.AutomationElement]
   for ($p = 0; $p -lt $processes.Count; $p++) {
-    $window = Get-WindowByProcessId -root $root -process $processes[$p]
-    if ($null -ne $window) { break }
+    $candidates = Get-WindowCandidatesByProcessId -root $root -process $processes[$p]
+    foreach ($candidate in $candidates) {
+      [void]$windowCandidates.Add($candidate)
+    }
   }
 
-  if ($null -eq $window) {
+  if ($windowCandidates.Count -eq 0) {
     return @{
       ok = $false
       status = "window_not_found"
@@ -234,7 +239,30 @@ function Invoke-CaptionProbe(
     }
   }
 
-  $text = Extract-CaptionText -window $window -automationId $automationId
+  $preferredWindows = @()
+  $fallbackWindows = @()
+  for ($w = 0; $w -lt $windowCandidates.Count; $w++) {
+    try {
+      $title = Normalize-Text([string]$windowCandidates[$w].Current.Name)
+      if ([string]::IsNullOrWhiteSpace($title) -or $title -match '(?i)^live captions$|^实时字幕$|^即時字幕$|^字幕$') {
+        $preferredWindows += $windowCandidates[$w]
+      } else {
+        $fallbackWindows += $windowCandidates[$w]
+      }
+    } catch {
+      $fallbackWindows += $windowCandidates[$w]
+    }
+  }
+
+  $text = ""
+  foreach ($candidateWindow in @($preferredWindows + $fallbackWindows)) {
+    $candidateText = Extract-CaptionText -window $candidateWindow -automationId $automationId
+    if (-not [string]::IsNullOrWhiteSpace($candidateText) -and -not (Is-IgnoredCaptionText($candidateText))) {
+      $text = $candidateText
+      break
+    }
+  }
+
   if ([string]::IsNullOrWhiteSpace($text)) {
     $titleWindows = Find-CaptionWindowsByTitle -root $root
     for ($w = 0; $w -lt $titleWindows.Count; $w++) {

@@ -3,6 +3,15 @@ import { consumeSSEChunk, flushSSEState } from '../utils/sse';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 
+function guessScreenshotFileExtension(dataUrl = '') {
+  const match = String(dataUrl || '').match(/^data:(image\/[a-z0-9+.-]+);/i);
+  const mimeType = String(match?.[1] || '').toLowerCase();
+  if (mimeType.includes('jpeg')) return 'jpg';
+  if (mimeType.includes('webp')) return 'webp';
+  if (mimeType.includes('bmp')) return 'bmp';
+  return 'png';
+}
+
 /**
  * useAIAnswer — sends a detected question to the backend and streams the answer.
  *
@@ -34,6 +43,16 @@ export function useAIAnswer() {
     }
   }, []);
 
+  const beginRequest = useCallback(() => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsLoading(true);
+    setError(null);
+    setAnswer('');
+    return controller;
+  }, []);
+
   const generateAnswer = useCallback(async ({ question, personalInfo, answerSettings, setup, conversationHistory }) => {
     const cooldownRemainingMs = getCooldownRemainingMs();
     if (cooldownRemainingMs > 0) {
@@ -41,14 +60,7 @@ export function useAIAnswer() {
       return;
     }
 
-    // Cancel any in-flight request
-    abortControllerRef.current?.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    setIsLoading(true);
-    setError(null);
-    setAnswer('');
+    const controller = beginRequest();
 
     try {
       const response = await fetch(`${SERVER_URL}/api/ai/answer`, {
@@ -155,9 +167,97 @@ export function useAIAnswer() {
         );
       }
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       setIsLoading(false);
     }
-  }, [getCooldownRemainingMs, markRateLimitCooldown]);
+  }, [beginRequest, getCooldownRemainingMs, markRateLimitCooldown]);
+
+  const generateAnswerFromScreenshot = useCallback(async ({
+    screenshotDataUrl,
+    transcript,
+    personalInfo,
+    answerSettings,
+    setup,
+    conversationHistory,
+  }) => {
+    const cooldownRemainingMs = getCooldownRemainingMs();
+    if (cooldownRemainingMs > 0) {
+      setError(`Rate limit cooldown active. Wait about ${Math.ceil(cooldownRemainingMs / 1000)}s and try again.`);
+      return null;
+    }
+
+    const controller = beginRequest();
+
+    try {
+      const screenshotResponse = await fetch(String(screenshotDataUrl || ''));
+      const screenshotBlob = await screenshotResponse.blob();
+      if (!screenshotBlob || screenshotBlob.size === 0) {
+        throw new Error('Captured screenshot was empty.');
+      }
+
+      const form = new FormData();
+      form.append(
+        'image',
+        screenshotBlob,
+        `screen-capture.${guessScreenshotFileExtension(screenshotDataUrl)}`
+      );
+      form.append('provider', setup?.aiProvider || '');
+      form.append('transcript', String(transcript || ''));
+      form.append('personalInfo', JSON.stringify(personalInfo || {}));
+      form.append('answerSettings', JSON.stringify(answerSettings || {}));
+      form.append('setup', JSON.stringify(setup || {}));
+      form.append('conversationHistory', JSON.stringify(conversationHistory || []));
+
+      const response = await fetch(`${SERVER_URL}/api/ai/answer-screenshot`, {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let message = `Server error: ${response.status}`;
+        try {
+          const body = await response.json();
+          if (body.error) message = body.error;
+        } catch {
+          // Ignore JSON parse errors and fall back to the status code.
+        }
+        markRateLimitCooldown(message);
+        throw new Error(message);
+      }
+
+      const body = await response.json();
+      const nextAnswer = String(body?.answer || '').trim();
+      if (!nextAnswer) {
+        throw new Error('Screenshot answer was empty.');
+      }
+
+      setAnswer(nextAnswer);
+      setError(null);
+      return {
+        answer: nextAnswer,
+        question: String(body?.question || '').trim(),
+      };
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        markRateLimitCooldown(err.message);
+        const cooldownLeftMs = getCooldownRemainingMs();
+        setError(
+          cooldownLeftMs > 0 && /rate limit/i.test(String(err.message))
+            ? `Rate limit reached. Wait about ${Math.ceil(cooldownLeftMs / 1000)}s and try again.`
+            : err.message
+        );
+      }
+      return null;
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      setIsLoading(false);
+    }
+  }, [beginRequest, getCooldownRemainingMs, markRateLimitCooldown]);
 
   const cancelGeneration = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -169,5 +269,13 @@ export function useAIAnswer() {
     setError(null);
   }, []);
 
-  return { answer, isLoading, error, generateAnswer, cancelGeneration, clearAnswer };
+  return {
+    answer,
+    isLoading,
+    error,
+    generateAnswer,
+    generateAnswerFromScreenshot,
+    cancelGeneration,
+    clearAnswer,
+  };
 }

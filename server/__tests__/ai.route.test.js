@@ -2,6 +2,7 @@
 
 jest.mock('../services/openai.service', () => ({
   generateAnswer: jest.fn(),
+  generateScreenshotAnswer: jest.fn(),
   detectQuestion: jest.fn(),
   transcribeAudioChunk: jest.fn(),
   getProviderCooldownRemainingMs: jest.fn(() => 30_000),
@@ -17,6 +18,7 @@ const request = require('supertest');
 const aiRouter = require('../routes/ai');
 const {
   generateAnswer,
+  generateScreenshotAnswer,
   getProviderCooldownRemainingMs,
   isProviderConfigured,
   isTranscribeProviderConfigured,
@@ -179,6 +181,66 @@ describe('AI answer streaming route', () => {
     const questionSent = generateAnswer.mock.calls[0][0].question;
     expect(questionSent.length).toBeLessThanOrEqual(1600);
     expect(questionSent.endsWith('-tail')).toBe(true);
+  });
+});
+
+describe('AI screenshot answer route', () => {
+  let app;
+
+  beforeEach(() => {
+    app = express();
+    app.use(express.json());
+    app.use('/api/ai', aiRouter);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    isProviderConfigured.mockReturnValue(true);
+    normalizeProvider.mockImplementation((provider) => provider || 'openai');
+    getProviderCooldownRemainingMs.mockReturnValue(30_000);
+  });
+
+  it('returns a screenshot-derived answer and inferred question', async () => {
+    generateScreenshotAnswer.mockResolvedValue({
+      question: 'What is your biggest strength?',
+      answer: 'My biggest strength is staying calm under pressure.',
+    });
+
+    const res = await request(app)
+      .post('/api/ai/answer-screenshot')
+      .field('provider', 'openai')
+      .field('transcript', 'recent transcript tail')
+      .field('personalInfo', JSON.stringify({ fullName: 'Casey' }))
+      .field('answerSettings', JSON.stringify({ answerLength: 'medium' }))
+      .field('setup', JSON.stringify({ answerLang: 'en-US' }))
+      .field('conversationHistory', JSON.stringify([{ role: 'user', content: 'Hi' }]))
+      .attach('image', Buffer.from('fake-image'), {
+        filename: 'screen.png',
+        contentType: 'image/png',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.question).toBe('What is your biggest strength?');
+    expect(res.body.answer).toContain('staying calm under pressure');
+    expect(generateScreenshotAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'openai',
+      imageMimeType: 'image/png',
+      transcript: 'recent transcript tail',
+      personalInfo: { fullName: 'Casey' },
+      answerSettings: { answerLength: 'medium' },
+      setup: { answerLang: 'en-US' },
+      conversationHistory: [{ role: 'user', content: 'Hi' }],
+    }));
+  });
+
+  it('returns 400 when screenshot image is missing', async () => {
+    const res = await request(app)
+      .post('/api/ai/answer-screenshot')
+      .field('provider', 'openai');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('screenshot image is required');
+    expect(generateScreenshotAnswer).not.toHaveBeenCalled();
   });
 });
 

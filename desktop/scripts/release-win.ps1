@@ -12,6 +12,16 @@ Push-Location $desktopRoot
 try {
   Write-Host "[release-win] Desktop root: $desktopRoot"
 
+  $hasSigningConfig = @(
+    $env:CSC_LINK,
+    $env:WIN_CSC_LINK,
+    $env:CSC_NAME,
+    $env:WIN_CSC_KEY_PASSWORD,
+    $env:CSC_KEY_PASSWORD
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1
+
+  $useSignedBuild = (-not $NoSign) -and $null -ne $hasSigningConfig
+
   if (-not $SkipTests) {
     Write-Host "[release-win] Step 1/4: Running desktop tests..."
     cmd /c "set CI=true&&npm test -- --watch=false --runInBand"
@@ -20,10 +30,14 @@ try {
   }
 
   Write-Host "[release-win] Step 2/4: Building Windows installer..."
-  if ($NoSign) {
-    cmd /c "set CSC_IDENTITY_AUTO_DISCOVERY=false&&npm run build:win:unsigned"
+  if ($useSignedBuild) {
+    Write-Host "[release-win] Signing configuration detected. Using signed Windows build."
+    cmd /c "npm run build:win:signed"
   } else {
-    cmd /c "npm run build:win"
+    if (-not $NoSign) {
+      Write-Host "[release-win] No signing configuration detected. Falling back to unsigned Windows build."
+    }
+    cmd /c "set CSC_IDENTITY_AUTO_DISCOVERY=false&&npm run build:win:unsigned"
   }
 
   $outDir = Join-Path $desktopRoot "out"
@@ -46,8 +60,12 @@ try {
   Set-Content -Path $hashFile -Value $hashLines -Encoding Ascii
   Write-Host "[release-win] Wrote $hashFile"
 
-  if ($NoSign) {
-    Write-Host "[release-win] Step 4/4: Skipped signature verification (--NoSign)."
+  if (-not $useSignedBuild) {
+    if ($NoSign) {
+      Write-Host "[release-win] Step 4/4: Skipped signature verification (--NoSign)."
+    } else {
+      Write-Host "[release-win] Step 4/4: Skipped signature verification (unsigned fallback)."
+    }
   } else {
     Write-Host "[release-win] Step 4/4: Verifying Authenticode signatures..."
     foreach ($artifact in $exeArtifacts) {

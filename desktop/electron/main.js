@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -23,6 +23,10 @@ let localWhisperLeaseCount = 0;
 let localWhisperStartPromise = null;
 let localWhisperLastExitCode = null;
 let localWhisperRecentLogs = [];
+let windowsLiveCaptionsMicAudioCache = {
+  enabled: false,
+  verifiedAt: 0,
+};
 
 const LOCAL_WHISPER_HEALTH_URL = String(
   process.env.LOCAL_WHISPER_HEALTH_URL || 'http://127.0.0.1:8765/health'
@@ -372,6 +376,25 @@ Write-Output "include_mic_not_invokable"
   }
 }
 
+async function ensureWindowsLiveCaptionsMicrophoneAudioEnabled(enabled = true, attempts = 3) {
+  for (let index = 0; index < Math.max(1, attempts); index += 1) {
+    try {
+      const ok = await setWindowsLiveCaptionsMicrophoneAudioEnabled(enabled);
+      if (ok) {
+        windowsLiveCaptionsMicAudioCache = {
+          enabled,
+          verifiedAt: Date.now(),
+        };
+        return true;
+      }
+    } catch {
+      // Retry while the preferences UI settles.
+    }
+    await sleep(450 + (index * 180));
+  }
+  return false;
+}
+
 async function hideWindowsLiveCaptionsWindowOnce() {
   if (!supportsWindowsLiveCaptions()) return false;
   const script = `
@@ -385,9 +408,13 @@ public static class WindowNative {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-  public const int SW_HIDE = 0;
   public const int SW_SHOWNOACTIVATE = 4;
+  public const int GWL_EXSTYLE = -20;
+  public const int WS_EX_TOOLWINDOW = 0x00000080;
+  public const int WS_EX_APPWINDOW = 0x00040000;
   public static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
   public const uint SWP_NOSIZE = 0x0001;
   public const uint SWP_NOACTIVATE = 0x0010;
@@ -421,12 +448,83 @@ if ($targets.Count -eq 0 -and $proc.MainWindowHandle -ne 0) {
 if ($targets.Count -eq 0) { Write-Output "no_window"; exit 0 }
 
 foreach ($hWnd in $targets) {
+  $style = [WindowNative]::GetWindowLong($hWnd, [WindowNative]::GWL_EXSTYLE)
+  if ($style -ne 0) {
+    $nextStyle = ($style -bor [WindowNative]::WS_EX_TOOLWINDOW) -band (-bnot [WindowNative]::WS_EX_APPWINDOW)
+    [WindowNative]::SetWindowLong($hWnd, [WindowNative]::GWL_EXSTYLE, $nextStyle) | Out-Null
+  }
   [WindowNative]::ShowWindowAsync($hWnd, [WindowNative]::SW_SHOWNOACTIVATE) | Out-Null
   [WindowNative]::SetWindowPos(
     $hWnd,
     [WindowNative]::HWND_BOTTOM,
     -32000,
     -32000,
+    0,
+    0,
+    [WindowNative]::SWP_NOSIZE -bor [WindowNative]::SWP_NOACTIVATE -bor [WindowNative]::SWP_SHOWWINDOW
+  ) | Out-Null
+}
+
+Write-Output "ok"
+`;
+  const output = String(await runPowerShellScript(script, 5000) || '').trim().toLowerCase();
+  return output;
+}
+
+async function showWindowsLiveCaptionsWindowOnce() {
+  if (!supportsWindowsLiveCaptions()) return false;
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WindowNative {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  public const int SW_SHOWNOACTIVATE = 4;
+  public const int SW_RESTORE = 9;
+  public static readonly IntPtr HWND_TOP = new IntPtr(0);
+  public const uint SWP_NOSIZE = 0x0001;
+  public const uint SWP_NOACTIVATE = 0x0010;
+  public const uint SWP_SHOWWINDOW = 0x0040;
+}
+"@
+$proc = Get-Process -Name LiveCaptions -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $proc) { Write-Output "not_running"; exit 0 }
+$targets = New-Object System.Collections.Generic.List[IntPtr]
+$callback = [WindowNative+EnumWindowsProc]{
+  param([IntPtr]$hWnd, [IntPtr]$lParam)
+  $pid = 0
+  [WindowNative]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
+  if ($pid -ne [uint32]$proc.Id) { return $true }
+
+  $builder = New-Object System.Text.StringBuilder 512
+  [WindowNative]::GetWindowText($hWnd, $builder, $builder.Capacity) | Out-Null
+  $title = ($builder.ToString() -replace '\s+', ' ').Trim()
+  if ([string]::IsNullOrWhiteSpace($title) -or $title -match '(?i)^live captions$|^实时字幕$|^即時字幕$|^字幕$') {
+    [void]$targets.Add($hWnd)
+  }
+  return $true
+}
+[WindowNative]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+
+if ($targets.Count -eq 0 -and $proc.MainWindowHandle -ne 0) {
+  [void]$targets.Add([IntPtr]$proc.MainWindowHandle)
+}
+
+if ($targets.Count -eq 0) { Write-Output "no_window"; exit 0 }
+
+foreach ($hWnd in $targets) {
+  [WindowNative]::ShowWindowAsync($hWnd, [WindowNative]::SW_RESTORE) | Out-Null
+  [WindowNative]::ShowWindowAsync($hWnd, [WindowNative]::SW_SHOWNOACTIVATE) | Out-Null
+  [WindowNative]::SetWindowPos(
+    $hWnd,
+    [WindowNative]::HWND_TOP,
+    120,
+    24,
     0,
     0,
     [WindowNative]::SWP_NOSIZE -bor [WindowNative]::SWP_NOACTIVATE -bor [WindowNative]::SWP_SHOWWINDOW
@@ -460,8 +558,161 @@ async function hideWindowsLiveCaptionsWindow() {
   return false;
 }
 
+async function showWindowsLiveCaptionsWindow() {
+  if (!supportsWindowsLiveCaptions()) return false;
+
+  const attempts = 5;
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      const status = await showWindowsLiveCaptionsWindowOnce();
+      if (status.includes('ok')) {
+        return true;
+      }
+      if (status.includes('not_running')) {
+        return false;
+      }
+    } catch {
+      // Retry while the captions window settles.
+    }
+    await sleep(350);
+  }
+  return false;
+}
+
+async function inspectWindowsLiveCaptionsWindowOnce() {
+  if (!supportsWindowsLiveCaptions()) {
+    return {
+      supported: false,
+      running: false,
+      windowFound: false,
+      hidden: false,
+      visible: false,
+      offscreen: false,
+      left: 0,
+      top: 0,
+      title: '',
+    };
+  }
+
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WindowNative {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT {
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+  }
+}
+"@
+$result = [ordered]@{
+  supported = $true
+  running = $false
+  windowFound = $false
+  hidden = $false
+  visible = $false
+  offscreen = $false
+  left = 0
+  top = 0
+  title = ""
+}
+
+$proc = Get-Process -Name LiveCaptions -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $proc) {
+  $result | ConvertTo-Json -Compress
+  exit 0
+}
+
+$result.running = $true
+$targets = New-Object System.Collections.Generic.List[IntPtr]
+$titles = New-Object System.Collections.Generic.Dictionary[string, string]
+$callback = [WindowNative+EnumWindowsProc]{
+  param([IntPtr]$hWnd, [IntPtr]$lParam)
+  $pid = 0
+  [WindowNative]::GetWindowThreadProcessId($hWnd, [ref]$pid) | Out-Null
+  if ($pid -ne [uint32]$proc.Id) { return $true }
+
+  $builder = New-Object System.Text.StringBuilder 512
+  [WindowNative]::GetWindowText($hWnd, $builder, $builder.Capacity) | Out-Null
+  $title = ($builder.ToString() -replace '\\s+', ' ').Trim()
+  if ([string]::IsNullOrWhiteSpace($title) -or $title -match '(?i)^live captions$|^实时字幕$|^即時字幕$|^字幕$') {
+    [void]$targets.Add($hWnd)
+    $titles[[string]$hWnd] = $title
+  }
+  return $true
+}
+[WindowNative]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+
+if ($targets.Count -eq 0 -and $proc.MainWindowHandle -ne 0) {
+  [void]$targets.Add([IntPtr]$proc.MainWindowHandle)
+  $titles[[string]([IntPtr]$proc.MainWindowHandle)] = ""
+}
+
+if ($targets.Count -eq 0) {
+  $result.hidden = $true
+  $result | ConvertTo-Json -Compress
+  exit 0
+}
+
+$target = $targets[0]
+$result.windowFound = $true
+$result.visible = [WindowNative]::IsWindowVisible($target)
+$rect = New-Object WindowNative+RECT
+if ([WindowNative]::GetWindowRect($target, [ref]$rect)) {
+  $result.left = $rect.Left
+  $result.top = $rect.Top
+  $result.offscreen = ($rect.Left -le -30000 -or $rect.Top -le -30000)
+}
+$titleKey = [string]$target
+if ($titles.ContainsKey($titleKey)) {
+  $result.title = [string]$titles[$titleKey]
+}
+$result.hidden = (-not $result.visible) -or $result.offscreen
+$result | ConvertTo-Json -Compress
+`;
+
+  try {
+    const output = String(await runPowerShellScript(script, 5000) || '').trim();
+    return JSON.parse(output);
+  } catch {
+    return {
+      supported: true,
+      running: await isWindowsLiveCaptionsRunning(),
+      windowFound: false,
+      hidden: false,
+      visible: false,
+      offscreen: false,
+      left: 0,
+      top: 0,
+      title: '',
+    };
+  }
+}
+
+async function getWindowsLiveCaptionsWindowState(attempts = 4) {
+  for (let index = 0; index < Math.max(1, attempts); index += 1) {
+    const state = await inspectWindowsLiveCaptionsWindowOnce();
+    if (state.windowFound || !state.running) {
+      return state;
+    }
+    await sleep(250);
+  }
+  return inspectWindowsLiveCaptionsWindowOnce();
+}
+
 async function ensureWindowsLiveCaptions(options = {}) {
-  const autoHide = options?.autoHide !== false;
+  const autoHide = options?.autoHide === true;
+  const deferAutoHide = options?.deferAutoHide !== false;
   const includeMicrophoneAudio = options?.includeMicrophoneAudio === true;
   const silent = Boolean(options?.silent);
 
@@ -514,24 +765,45 @@ async function ensureWindowsLiveCaptions(options = {}) {
       };
     }
 
+    let shown = false;
+    try {
+      await sleep(350);
+      shown = await showWindowsLiveCaptionsWindow();
+    } catch {
+      shown = false;
+    }
+
     let microphoneAudioEnabled = false;
     if (includeMicrophoneAudio) {
       try {
-        await sleep(350);
-        microphoneAudioEnabled = await setWindowsLiveCaptionsMicrophoneAudioEnabled(true);
+        const cacheAgeMs = Date.now() - windowsLiveCaptionsMicAudioCache.verifiedAt;
+        if (windowsLiveCaptionsMicAudioCache.enabled && cacheAgeMs < (1000 * 60 * 60 * 6)) {
+          microphoneAudioEnabled = true;
+        } else {
+          await sleep(350);
+          microphoneAudioEnabled = await ensureWindowsLiveCaptionsMicrophoneAudioEnabled(true);
+        }
       } catch {
         microphoneAudioEnabled = false;
       }
     }
 
     let hidden = false;
-    if (autoHide) {
+    let autoHidePending = false;
+    if (autoHide && !deferAutoHide) {
       try {
         await sleep(1_200);
         hidden = await hideWindowsLiveCaptionsWindow();
       } catch {
         hidden = false;
       }
+    } else if (autoHide) {
+      autoHidePending = true;
+    }
+
+    const windowState = await getWindowsLiveCaptionsWindowState();
+    if (typeof windowState?.hidden === 'boolean') {
+      hidden = windowState.hidden;
     }
 
     return {
@@ -542,8 +814,11 @@ async function ensureWindowsLiveCaptions(options = {}) {
         : 'Windows Live Captions already running.',
       running: true,
       hidden,
+      autoHidePending,
       microphoneAudioEnabled,
       launchMethod,
+      shown,
+      windowState,
       silent,
     };
   } catch (err) {
@@ -943,9 +1218,72 @@ ipcMain.handle('hide-windows-live-captions', async () => ({
   ok: await hideWindowsLiveCaptionsWindow(),
 }));
 
+ipcMain.handle('show-windows-live-captions', async () => ({
+  ok: await showWindowsLiveCaptionsWindow(),
+}));
+
+async function capturePrimaryScreen(options = {}) {
+  const excludeAppWindow = options?.excludeAppWindow !== false;
+  const display = screen.getPrimaryDisplay();
+  const displaySize = display?.size || display?.workAreaSize || { width: 1920, height: 1080 };
+  const captureWidth = Math.max(1280, Number(displaySize.width) || 1280);
+  const captureHeight = Math.max(720, Number(displaySize.height) || 720);
+
+  const wasVisible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+  if (excludeAppWindow && wasVisible) {
+    mainWindow.hide();
+    await sleep(180);
+  }
+
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: captureWidth,
+        height: captureHeight,
+      },
+      fetchWindowIcons: false,
+    });
+    const preferredSource = sources.find((source) => String(source.display_id || '') === String(display?.id || ''))
+      || sources[0];
+    if (!preferredSource || preferredSource.thumbnail.isEmpty()) {
+      return {
+        ok: false,
+        error: 'Unable to capture the primary screen right now.',
+      };
+    }
+
+    return {
+      ok: true,
+      dataUrl: preferredSource.thumbnail.toDataURL(),
+      displayId: preferredSource.display_id || String(display?.id || ''),
+      width: preferredSource.thumbnail.getSize().width,
+      height: preferredSource.thumbnail.getSize().height,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || 'Unable to capture the primary screen right now.',
+    };
+  } finally {
+    if (excludeAppWindow && wasVisible && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.showInactive?.();
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    }
+  }
+}
+
+ipcMain.handle('capture-primary-screen', async (_event, options) => (
+  capturePrimaryScreen(options || {})
+));
+
 ipcMain.handle('windows-live-captions-status', async () => ({
   supported: supportsWindowsLiveCaptions(),
   running: await isWindowsLiveCaptionsRunning(),
+  ...(await getWindowsLiveCaptionsWindowState()),
   platform: process.platform,
   build: getWindowsBuildNumber(),
 }));

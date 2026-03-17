@@ -1350,6 +1350,194 @@ function tryParseJson(raw) {
   }
 }
 
+function extractMessageText(content) {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      if (typeof part?.text === 'string') return part.text;
+      return '';
+    })
+    .join('\n')
+    .trim();
+}
+
+function buildScreenshotPrompt({
+  transcript = '',
+  answerSettings = {},
+  setup = {},
+  conversationHistory = [],
+}) {
+  const transcriptContext = String(transcript || '').trim();
+  const recentTurns = sanitizeMessages(conversationHistory || [])
+    .slice(-6)
+    .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
+    .join('\n');
+
+  return [
+    'Analyze this screen capture from a live interview or assessment.',
+    'Identify the most likely active interview question, coding prompt, or task visible on screen.',
+    'Use subtitles, slides, browser text, IDE text, terminal text, and visible UI context when helpful.',
+    `Answer language: ${setup?.answerLang || 'en-US'}.`,
+    `Preferred response style: ${answerSettings?.responseStyle || 'conversational'}.`,
+    `Preferred answer length: ${answerSettings?.answerLength || 'medium'}.`,
+    transcriptContext ? `Recent transcript context:\n${transcriptContext}` : 'Recent transcript context: none.',
+    recentTurns ? `Recent conversation history:\n${recentTurns}` : 'Recent conversation history: none.',
+    'Return valid JSON only with this shape:',
+    '{"question":"best inferred visible question or empty string","answer":"candidate-style answer"}',
+    'If the screenshot does not contain a reliable question, set "question" to an empty string and still provide the best helpful answer for the most likely prompt.',
+  ].join('\n\n');
+}
+
+function normalizeScreenshotAnswerPayload(payload, fallbackText = '') {
+  const parsed = payload && typeof payload === 'object'
+    ? payload
+    : tryParseJson(String(fallbackText || ''));
+  if (parsed && typeof parsed === 'object') {
+    return {
+      question: String(parsed.question || '').trim(),
+      answer: String(parsed.answer || parsed.response || fallbackText || '').trim(),
+    };
+  }
+  return {
+    question: '',
+    answer: String(fallbackText || '').trim(),
+  };
+}
+
+async function generateScreenshotAnswer({
+  provider,
+  imageBuffer,
+  imageMimeType = 'image/png',
+  transcript = '',
+  personalInfo = {},
+  answerSettings = {},
+  setup = {},
+  conversationHistory = [],
+}) {
+  if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length === 0) {
+    const err = new Error('screenshot image is required');
+    err.status = 400;
+    throw err;
+  }
+
+  const selectedProvider = normalizeProvider(provider || setup?.aiProvider);
+  if (!isProviderConfigured(selectedProvider)) {
+    const err = new Error(
+      selectedProvider === 'gemini'
+        ? 'Screenshot answering requires GEMINI_API_KEY.'
+        : 'Screenshot answering requires OPENAI_API_KEY.'
+    );
+    err.status = 503;
+    err.provider = selectedProvider;
+    throw err;
+  }
+
+  if (isProviderOnCooldown(selectedProvider)) {
+    throw buildRateLimitError(selectedProvider);
+  }
+
+  const systemPrompt = buildSystemPrompt(personalInfo, answerSettings, setup);
+  const screenshotPrompt = buildScreenshotPrompt({
+    transcript,
+    answerSettings,
+    setup,
+    conversationHistory,
+  });
+
+  try {
+    if (selectedProvider === 'gemini') {
+      const model = encodeURIComponent(getAnswerModel(selectedProvider));
+      const url = `${GEMINI_NATIVE_BASE_URL}/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+      const payload = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: `${systemPrompt}\n\n${screenshotPrompt}`,
+              },
+              {
+                inlineData: {
+                  mimeType: String(imageMimeType || 'image/png'),
+                  data: imageBuffer.toString('base64'),
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+        },
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const message = body?.error?.message || `Gemini screenshot answer failed (${response.status})`;
+        const err = new Error(message);
+        err.status = response.status;
+        err.provider = selectedProvider;
+        throw err;
+      }
+
+      const body = await response.json();
+      const rawText = extractGeminiText(body);
+      const result = normalizeScreenshotAnswerPayload(null, rawText);
+      if (!result.answer) {
+        const err = new Error('Gemini returned an empty screenshot answer.');
+        err.status = 502;
+        err.provider = selectedProvider;
+        throw err;
+      }
+      return result;
+    }
+
+    const client = getClient(selectedProvider);
+    const response = await client.chat.completions.create({
+      model: getAnswerModel(selectedProvider),
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: screenshotPrompt },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${String(imageMimeType || 'image/png')};base64,${imageBuffer.toString('base64')}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 700,
+    });
+
+    const rawText = extractMessageText(response?.choices?.[0]?.message?.content);
+    const result = normalizeScreenshotAnswerPayload(null, rawText);
+    if (!result.answer) {
+      const err = new Error('OpenAI returned an empty screenshot answer.');
+      err.status = 502;
+      err.provider = selectedProvider;
+      throw err;
+    }
+    return result;
+  } catch (err) {
+    if (err?.status === 429) {
+      markProviderRateLimited(selectedProvider, err);
+      throw buildRateLimitError(selectedProvider);
+    }
+    throw err;
+  }
+}
+
 /**
  * Detect whether a transcript contains an interview question.
  * Returns { isQuestion: boolean, question: string|null }.
@@ -1450,6 +1638,7 @@ function heuristicQuestionDetection(transcript) {
 
 module.exports = {
   generateAnswer,
+  generateScreenshotAnswer,
   detectQuestion,
   transcribeAudioChunk,
   buildSystemPrompt,

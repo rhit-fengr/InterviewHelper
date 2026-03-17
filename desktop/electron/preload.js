@@ -36,7 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLocalWhisperStatus: () => ipcRenderer.invoke('local-whisper-status'),
   ensureWindowsLiveCaptions: (options = {}) => ipcRenderer.invoke('ensure-windows-live-captions', options),
   hideWindowsLiveCaptions: () => ipcRenderer.invoke('hide-windows-live-captions'),
+  showWindowsLiveCaptions: () => ipcRenderer.invoke('show-windows-live-captions'),
   getWindowsLiveCaptionsStatus: () => ipcRenderer.invoke('windows-live-captions-status'),
+  capturePrimaryScreen: (options = {}) => ipcRenderer.invoke('capture-primary-screen', options),
 
   // Check if running inside Electron
   isElectron: true,

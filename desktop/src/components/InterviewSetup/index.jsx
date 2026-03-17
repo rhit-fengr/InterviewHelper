@@ -72,7 +72,7 @@ export default function InterviewSetup({ onStart }) {
             checked={autoHideWindowsLiveCaptions}
             onChange={(e) => updateSetup({ autoHideWindowsLiveCaptions: e.target.checked })}
           />
-          <span>Auto-hide Windows Live Captions (recommended off for stability)</span>
+          <span>Auto-hide Windows Live Captions after captions begin flowing (experimental; runtime Hide/Show button is more stable)</span>
         </label>
         <label className="checkbox-row">
           <input

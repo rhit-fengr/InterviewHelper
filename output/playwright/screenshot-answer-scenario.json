@@ -1,0 +1,32 @@
+{
+  "name": "screenshot-answer-flow",
+  "fixtures": [],
+  "capture": {
+    "mic": {
+      "emissions": []
+    },
+    "system": {
+      "emissions": []
+    }
+  },
+  "detectQuestion": [],
+  "screenshot": {
+    "imageDataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0uoAAAAASUVORK5CYII=",
+    "question": "Explain the difference between throttling and debouncing.",
+    "answer": "Throttling limits how often a function can run over time, while debouncing waits until calls stop for a moment before running once."
+  },
+  "answer": {
+    "events": [
+      {
+        "data": {
+          "text": "unused"
+        }
+      },
+      {
+        "data": {
+          "done": true
+        }
+      }
+    ]
+  }
+}

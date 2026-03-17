@@ -61,6 +61,13 @@ export default function StandardMode({ onBack }) {
   const [lastQuestion, setLastQuestion] = useState('');
   const [transcriptEntries, setTranscriptEntries] = useState([]);
   const [historyView, setHistoryView] = useState('expanded');
+  const [localError, setLocalError] = useState('');
+  const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
+  const [windowsCaptionsWindowHidden, setWindowsCaptionsWindowHidden] = useState(
+    setup.autoHideWindowsLiveCaptions === true
+  );
+  const [windowsCaptionsWindowBusy, setWindowsCaptionsWindowBusy] = useState(false);
+  const [windowsCaptionsWindowError, setWindowsCaptionsWindowError] = useState('');
   const detectionTimeoutRef = useRef(null);
   const transcriptScrollRef = useRef(null);
   const lastDetectedAtRef = useRef(0);
@@ -84,7 +91,15 @@ export default function StandardMode({ onBack }) {
   useEffect(() => { setupRef.current = setup; }, [setup]);
   useEffect(() => { conversationHistoryRef.current = conversationHistory; }, [conversationHistory]);
 
-  const { answer, isLoading, error: aiError, generateAnswer, cancelGeneration, clearAnswer } = useAIAnswer();
+  const {
+    answer,
+    isLoading,
+    error: aiError,
+    generateAnswer,
+    generateAnswerFromScreenshot,
+    cancelGeneration,
+    clearAnswer,
+  } = useAIAnswer();
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   const languageLabelByValue = useRef(
@@ -154,13 +169,40 @@ export default function StandardMode({ onBack }) {
   const interviewLangs = Array.isArray(setup.interviewLangs)
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
+  const isElectronRuntime = typeof window !== 'undefined' && window.electronAPI?.isElectron;
   const audioInputMode = session.audioInputMode || 'mic';
   const normalizedSttProvider = String(setup.sttProvider || 'auto').trim().toLowerCase();
   const windowsLiveCaptionsMicAssist = setup.windowsLiveCaptionsIncludeMicrophoneAudio !== false;
-  const useDualSourceMicStt = (
+  const useProviderDrivenMicOnly = audioInputMode === 'mic' && isElectronRuntime;
+  const useMicOnlyWindowsCaptions = useProviderDrivenMicOnly && normalizedSttProvider === 'windows-live-captions';
+  const useCombinedWindowsCaptions = (
     audioInputMode === 'mic-system'
-    && normalizedSttProvider !== 'windows-live-captions'
+    && normalizedSttProvider === 'windows-live-captions'
+    && windowsLiveCaptionsMicAssist
   );
+  const useDualAudioForCurrentMode = audioInputMode === 'mic-system' || useProviderDrivenMicOnly;
+  const canToggleWindowsLiveCaptionsWindow = isElectronRuntime && normalizedSttProvider === 'windows-live-captions';
+
+  const handleWindowsLiveCaptionsStatusChange = useCallback((status = {}) => {
+    if (typeof status.hidden === 'boolean') {
+      setWindowsCaptionsWindowHidden(status.hidden);
+    }
+    if (status.error) {
+      setWindowsCaptionsWindowError(String(status.error));
+    }
+  }, []);
+
+  const syncWindowsLiveCaptionsWindowState = useCallback(async () => {
+    if (!canToggleWindowsLiveCaptionsWindow || !window?.electronAPI?.getWindowsLiveCaptionsStatus) return;
+    try {
+      const status = await window.electronAPI.getWindowsLiveCaptionsStatus();
+      if (typeof status?.hidden === 'boolean') {
+        setWindowsCaptionsWindowHidden(status.hidden);
+      }
+    } catch {
+      // Ignore sync failures; manual toggle still reports errors explicitly.
+    }
+  }, [canToggleWindowsLiveCaptionsWindow]);
 
   const pushCombinedTranscriptForDetection = useCallback(() => {
     const combined = [micLiveTranscriptRef.current, systemLiveTranscriptRef.current]
@@ -195,17 +237,24 @@ export default function StandardMode({ onBack }) {
   }) => {
     const cleanedText = sanitizeTranscriptSegment(text);
     if (!cleanedText) return;
-    const sourceSpeaker = speakerFromSourceMode(sourceMode);
-    const speaker = providedSpeaker || (
-      sourceSpeaker !== 'Unknown' ? sourceSpeaker : guessSpeakerLabel(cleanedText)
+    const effectiveSourceMode = (
+      audioInputMode === 'mic' && sourceMode === 'system'
+        ? 'mic'
+        : sourceMode
     );
+    const sourceSpeaker = speakerFromSourceMode(effectiveSourceMode);
+    const speaker = useCombinedWindowsCaptions
+      ? guessSpeakerLabel(cleanedText)
+      : providedSpeaker || (
+        sourceSpeaker !== 'Unknown' ? sourceSpeaker : guessSpeakerLabel(cleanedText)
+      );
     setTranscriptEntries((prev) => {
       const nextEntry = {
         text: cleanedText,
         language: segmentLanguage,
         speaker,
         timestamp: timestamp || Date.now(),
-        sourceMode: sourceMode || 'unknown',
+        sourceMode: effectiveSourceMode || 'unknown',
       };
       if (prev.length > 0) {
         const previousEntry = prev[prev.length - 1];
@@ -220,13 +269,10 @@ export default function StandardMode({ onBack }) {
       }
       return [...prev, nextEntry].slice(-500);
     });
-  }, []);
+  }, [audioInputMode, useCombinedWindowsCaptions]);
 
   const webSpeechTranscript = useTranscript({
-    enabled: isRunning && (
-      audioInputMode === 'mic'
-      || (audioInputMode === 'mic-system' && !useDualSourceMicStt)
-    ),
+    enabled: isRunning && audioInputMode === 'mic' && !useProviderDrivenMicOnly,
     language: interviewLangs,
     onTranscriptChange: handleMicTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
@@ -234,41 +280,35 @@ export default function StandardMode({ onBack }) {
   });
 
   const dualAudioTranscript = useDualAudioTranscript({
-    enabled: isRunning && audioInputMode === 'mic-system',
+    enabled: isRunning && useDualAudioForCurrentMode,
     language: interviewLangs,
     provider: setup.aiProvider,
     transcribeProvider: setup.sttProvider,
     autoHideWindowsLiveCaptions: setup.autoHideWindowsLiveCaptions === true,
     includeWindowsLiveCaptionsMicrophoneAudio:
       normalizedSttProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist,
-    captureMic: useDualSourceMicStt,
-    captureSystem: true,
-    onTranscriptChange: useDualSourceMicStt ? handleTranscriptUpdate : handleSystemTranscriptUpdate,
+    captureMic: audioInputMode === 'mic-system'
+      ? !useCombinedWindowsCaptions
+      : !useMicOnlyWindowsCaptions,
+    captureSystem: audioInputMode === 'mic-system' || useMicOnlyWindowsCaptions,
+    onTranscriptChange: audioInputMode === 'mic-system'
+      ? handleTranscriptUpdate
+      : handleMicTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
+    onWindowsLiveCaptionsStatusChange: handleWindowsLiveCaptionsStatusChange,
   });
 
-  const transcript = audioInputMode === 'mic-system'
-    ? useDualSourceMicStt
-      ? dualAudioTranscript.transcript
-      : [webSpeechTranscript.transcript, dualAudioTranscript.transcript]
-        .map((value) => String(value || '').trim())
-        .filter(Boolean)
-        .join('\n')
+  const transcript = useDualAudioForCurrentMode
+    ? dualAudioTranscript.transcript
     : webSpeechTranscript.transcript;
-  const isListening = audioInputMode === 'mic-system'
-    ? useDualSourceMicStt
-      ? dualAudioTranscript.isListening
-      : (webSpeechTranscript.isListening || dualAudioTranscript.isListening)
+  const isListening = useDualAudioForCurrentMode
+    ? dualAudioTranscript.isListening
     : webSpeechTranscript.isListening;
-  const transcriptError = audioInputMode === 'mic-system'
-    ? useDualSourceMicStt
-      ? dualAudioTranscript.error
-      : [webSpeechTranscript.error, dualAudioTranscript.error].filter(Boolean).join(' | ')
+  const transcriptError = useDualAudioForCurrentMode
+    ? dualAudioTranscript.error
     : webSpeechTranscript.error;
-  const activeLanguage = audioInputMode === 'mic-system'
-    ? useDualSourceMicStt
-      ? dualAudioTranscript.activeLanguage
-      : webSpeechTranscript.activeLanguage
+  const activeLanguage = useDualAudioForCurrentMode
+    ? dualAudioTranscript.activeLanguage
     : webSpeechTranscript.activeLanguage;
   const systemSttLabel = normalizedSttProvider === 'auto'
     ? 'openai -> local -> gemini -> windows-live-captions'
@@ -280,9 +320,67 @@ export default function StandardMode({ onBack }) {
     : normalizedSttProvider === 'windows-live-captions'
       ? 'openai -> local -> gemini'
       : normalizedSttProvider;
-  const sttDisplayLabel = audioInputMode === 'mic-system'
-    ? `Mic=${useDualSourceMicStt ? micSttLabel : 'webspeech'} | System=${systemSttLabel}`
-    : 'Mic=webspeech';
+  const sttDisplayLabel = useCombinedWindowsCaptions
+    ? 'Captions=windows-live-captions + mic-assist'
+    : audioInputMode === 'mic-system'
+    ? `Mic=${micSttLabel} | System=${systemSttLabel}`
+    : useProviderDrivenMicOnly
+      ? `Mic=${useMicOnlyWindowsCaptions ? 'windows-live-captions + mic-assist' : micSttLabel}`
+      : 'Mic=webspeech';
+
+  useEffect(() => {
+    setWindowsCaptionsWindowHidden(setup.autoHideWindowsLiveCaptions === true);
+  }, [setup.autoHideWindowsLiveCaptions]);
+
+  useEffect(() => {
+    if (!isRunning || !canToggleWindowsLiveCaptionsWindow) return undefined;
+    let cancelled = false;
+
+    const sync = async () => {
+      if (cancelled) return;
+      await syncWindowsLiveCaptionsWindowState();
+    };
+
+    sync();
+    const timer = setInterval(sync, 1800);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isRunning, canToggleWindowsLiveCaptionsWindow, syncWindowsLiveCaptionsWindowState]);
+
+  const handleToggleWindowsLiveCaptionsWindow = useCallback(async () => {
+    if (!canToggleWindowsLiveCaptionsWindow || windowsCaptionsWindowBusy || !window?.electronAPI) return;
+    setWindowsCaptionsWindowBusy(true);
+    setWindowsCaptionsWindowError('');
+    try {
+      const result = windowsCaptionsWindowHidden
+        ? await window.electronAPI.showWindowsLiveCaptions()
+        : await window.electronAPI.hideWindowsLiveCaptions();
+      if (!result?.ok) {
+        setWindowsCaptionsWindowError(
+          windowsCaptionsWindowHidden
+            ? 'Unable to show Windows Live Captions right now.'
+            : 'Unable to hide Windows Live Captions right now.'
+        );
+        return;
+      }
+      await syncWindowsLiveCaptionsWindowState();
+    } catch {
+      setWindowsCaptionsWindowError(
+        windowsCaptionsWindowHidden
+          ? 'Unable to show Windows Live Captions right now.'
+          : 'Unable to hide Windows Live Captions right now.'
+      );
+    } finally {
+      setWindowsCaptionsWindowBusy(false);
+    }
+  }, [
+    canToggleWindowsLiveCaptionsWindow,
+    syncWindowsLiveCaptionsWindowState,
+    windowsCaptionsWindowBusy,
+    windowsCaptionsWindowHidden,
+  ]);
 
   const handleCustomSubmit = (e) => {
     e.preventDefault();
@@ -302,6 +400,67 @@ export default function StandardMode({ onBack }) {
     triggerAnswerGeneration(manualQuestion);
   };
 
+  const handleScreenshotAnswer = useCallback(async () => {
+    if (
+      !isElectronRuntime
+      || !window?.electronAPI?.capturePrimaryScreen
+      || isCapturingScreenshot
+      || isLoading
+    ) {
+      return;
+    }
+
+    setLocalError('');
+    setIsCapturingScreenshot(true);
+    try {
+      const captureResult = await window.electronAPI.capturePrimaryScreen({ excludeAppWindow: true });
+      if (!captureResult?.ok || !captureResult?.dataUrl) {
+        throw new Error(captureResult?.error || 'Unable to capture the primary screen right now.');
+      }
+
+      const transcriptContext = (
+        buildManualQuestionFromEntries(transcriptEntries, { maxEntries: 6, maxChars: 900 })
+        || getTranscriptTail(transcript, 900)
+      );
+
+      const result = await generateAnswerFromScreenshot({
+        screenshotDataUrl: captureResult.dataUrl,
+        transcript: transcriptContext,
+        personalInfo: personalInfoRef.current,
+        answerSettings: answerSettingsRef.current,
+        setup: setupRef.current,
+        conversationHistory: conversationHistoryRef.current,
+      });
+      if (!result?.answer) return;
+
+      const detectedQuestion = String(result.question || '').trim();
+      if (detectedQuestion) {
+        setLastQuestion(detectedQuestion);
+        const limit = Math.max(2, Number(answerSettingsRef.current.memoryLimit) || 10);
+        const messageLimit = limit * 2;
+        setConversationHistory((prev) => {
+          const next = [
+            ...prev,
+            { role: 'user', content: detectedQuestion },
+            { role: 'assistant', content: result.answer },
+          ];
+          return next.slice(-messageLimit);
+        });
+      }
+    } catch (error) {
+      setLocalError(error?.message || 'Unable to answer from screenshot right now.');
+    } finally {
+      setIsCapturingScreenshot(false);
+    }
+  }, [
+    generateAnswerFromScreenshot,
+    isCapturingScreenshot,
+    isElectronRuntime,
+    isLoading,
+    transcript,
+    transcriptEntries,
+  ]);
+
   const handleToggle = () => {
     if (isRunning) {
       clearTimeout(detectionTimeoutRef.current);
@@ -312,6 +471,8 @@ export default function StandardMode({ onBack }) {
       systemLiveTranscriptRef.current = '';
     } else {
       setIsRunning(true);
+      setLocalError('');
+      setWindowsCaptionsWindowError('');
       clearAnswer();
       webSpeechTranscript.clearTranscript();
       dualAudioTranscript.clearTranscript();
@@ -429,8 +590,30 @@ export default function StandardMode({ onBack }) {
         )}
       </div>
 
-      {(transcriptError || aiError) && (
-        <div className="error-box">⚠️ {transcriptError || aiError}</div>
+      <div className="feedback-slot" aria-live="polite">
+        {(transcriptError || aiError || windowsCaptionsWindowError || localError) && (
+          <div className="error-box">⚠️ {transcriptError || aiError || windowsCaptionsWindowError || localError}</div>
+        )}
+      </div>
+
+      {isRunning && canToggleWindowsLiveCaptionsWindow && (
+        <div className="caption-control-bar">
+          <button
+            type="button"
+            className="btn-caption-toggle"
+            onClick={handleToggleWindowsLiveCaptionsWindow}
+            disabled={windowsCaptionsWindowBusy}
+          >
+            {windowsCaptionsWindowBusy
+              ? 'Updating Live Captions...'
+              : windowsCaptionsWindowHidden
+                ? 'Show Live Captions'
+                : 'Hide Live Captions'}
+          </button>
+          <span className="caption-control-note">
+            Windows 11 24H2 is more stable if captions stay visible until text starts flowing.
+          </span>
+        </div>
       )}
 
       {session.showTranscript && (isRunning || transcript) && (
@@ -489,6 +672,18 @@ export default function StandardMode({ onBack }) {
           <button className="btn-answer-wide" onClick={handleManualAnswer} disabled={isLoading}>
             💡 Answer Current Transcript
             {session.autoAnswer ? ' (Manual Retry)' : ''}
+          </button>
+        </div>
+      )}
+
+      {isElectronRuntime && (
+        <div className="control-bar">
+          <button
+            className="btn-screenshot"
+            onClick={handleScreenshotAnswer}
+            disabled={isCapturingScreenshot || isLoading}
+          >
+            {isCapturingScreenshot ? 'Capturing Screenshot...' : '🖼 Answer Screenshot'}
           </button>
         </div>
       )}

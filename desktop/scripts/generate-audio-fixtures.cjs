@@ -191,7 +191,10 @@ function main() {
 
   const manifest = FIXTURES.map((fixture) => {
     const filePath = path.join(outputDir, fixture.fileName);
-    const tempMonoPath = path.join(outputDir, `${fixture.id}.mono.tmp.wav`);
+    const tempMonoPath = path.join(
+      outputDir,
+      `${fixture.id}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.mono.tmp.wav`
+    );
     synthesizeSpeechToWave(tempMonoPath, fixture.text);
 
     const processed = applyGainAndChannels(

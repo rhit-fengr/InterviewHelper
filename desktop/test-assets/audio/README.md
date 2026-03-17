@@ -27,11 +27,15 @@ npm run test:generate-audio-fixtures
 
 ## Current usage
 
+- `npm run test:mic-only-scenarios` covers Electron `Mic only` with `local` and `windows-live-captions`.
+- `npm run test:windows-live-captions-scenarios` covers `Mic + System + windows-live-captions + mic-assist`.
 - `npm run test:audio-scenarios` uses the manifest plus a virtual capture harness.
 - The harness plays real spoken `.wav` fixtures through `AudioContext` and `MediaStreamDestination`.
 - The app records those streams with the native `MediaRecorder` path.
 - Network calls for transcription and answering are mocked for stability.
 - The app still exercises its own transcript merge, source labeling, question detection trigger, and answer rendering paths.
+- The Electron WLC path is also checked against empty-caption warning regressions once transcript text is flowing.
+- The combined WLC path is also checked to ensure we do not keep a second cloud mic STT lane alive in parallel.
 
 ## Next step
 

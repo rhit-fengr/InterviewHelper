@@ -1,0 +1,83 @@
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Account summary (authenticated state) ──────────────────────────────── */
+
+.auth-account-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.auth-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auth-user-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.auth-user-email {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* ── Error banner ────────────────────────────────────────────────────────── */
+
+.auth-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 8px;
+  color: #fca5a5;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 12px;
+}
+
+/* ── Mode toggle link ────────────────────────────────────────────────────── */
+
+.auth-mode-toggle {
+  align-self: center;
+  margin-top: -4px;
+}
+
+/* ── Secondary button (sign out) ─────────────────────────────────────────── */
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 16px;
+  transition: background 0.2s, border-color 0.2s;
+  width: 100%;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-secondary:active {
+  transform: scale(0.98);
+}

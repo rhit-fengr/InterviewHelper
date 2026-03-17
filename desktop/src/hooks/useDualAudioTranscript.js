@@ -194,7 +194,7 @@ export function useDualAudioTranscript({
   const onRuntimeStateChangeRef = useRef(onRuntimeStateChange);
   const enabledRef = useRef(enabled);
   const transcribeInFlightRef = useRef({ mic: false, system: false });
-  const pendingChunkBySourceRef = useRef({ mic: null, system: null });
+  const pendingChunksBySourceRef = useRef({ mic: [], system: [] });
   const pendingUpdatedAtBySourceRef = useRef({ mic: 0, system: 0 });
   const localWhisperLeaseRef = useRef(false);
   const recorderMimeTypeRef = useRef('audio/webm');
@@ -206,6 +206,7 @@ export function useDualAudioTranscript({
   const windowsCaptionsHasReadableSegmentRef = useRef(false);
   const windowsCaptionsAutoHidePendingRef = useRef(false);
   const requestDataTimersRef = useRef({ mic: null, system: null });
+  const localRecycleTimersRef = useRef({ mic: null, system: null });
 
   useEffect(() => {
     onChangeRef.current = onTranscriptChange;
@@ -251,6 +252,11 @@ export function useDualAudioTranscript({
         clearInterval(requestDataTimer);
         requestDataTimersRef.current[sourceMode] = null;
       }
+      const recycleTimer = localRecycleTimersRef.current[sourceMode];
+      if (recycleTimer) {
+        clearTimeout(recycleTimer);
+        localRecycleTimersRef.current[sourceMode] = null;
+      }
 
       const recorder = recordersRef.current[sourceMode];
       if (recorder && recorder.state !== 'inactive') {
@@ -286,7 +292,7 @@ export function useDualAudioTranscript({
     }
 
     transcribeInFlightRef.current = { mic: false, system: false };
-    pendingChunkBySourceRef.current = { mic: null, system: null };
+    pendingChunksBySourceRef.current = { mic: [], system: [] };
     pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
     recentSegmentsBySourceRef.current = { mic: [], system: [] };
     windowsCaptionsEmptyPollCountRef.current = 0;
@@ -496,10 +502,11 @@ export function useDualAudioTranscript({
     if (!SOURCE_MODES.includes(source)) return;
     if (transcribeInFlightRef.current[source]) return;
 
-    const nextChunk = pendingChunkBySourceRef.current[source];
-    pendingChunkBySourceRef.current[source] = null;
-    pendingUpdatedAtBySourceRef.current[source] = 0;
-    if (!nextChunk) return;
+    const queue = pendingChunksBySourceRef.current[source];
+    if (!queue || queue.length === 0) return;
+
+    const nextChunk = queue.shift();
+    pendingUpdatedAtBySourceRef.current[source] = Date.now();
 
     transcribeInFlightRef.current[source] = true;
     transcribeChunk(nextChunk, source)
@@ -519,8 +526,7 @@ export function useDualAudioTranscript({
     const source = String(sourceMode || '').trim().toLowerCase();
     if (!SOURCE_MODES.includes(source)) return;
 
-    // Keep only the latest chunk per source to cap latency/memory.
-    pendingChunkBySourceRef.current[source] = chunkBlob;
+    pendingChunksBySourceRef.current[source].push(chunkBlob);
     pendingUpdatedAtBySourceRef.current[source] = Date.now();
     drainPendingChunks(source);
   }, [drainPendingChunks]);
@@ -678,7 +684,7 @@ export function useDualAudioTranscript({
         startupMicStream = null;
         startupSystemStream = null;
         transcribeInFlightRef.current = { mic: false, system: false };
-        pendingChunkBySourceRef.current = { mic: null, system: null };
+        pendingChunksBySourceRef.current = { mic: [], system: [] };
         pendingUpdatedAtBySourceRef.current = { mic: 0, system: 0 };
         lastSegmentsBySourceRef.current = { mic: '', system: '' };
         recentSegmentsBySourceRef.current = { mic: [], system: [] };
@@ -692,67 +698,118 @@ export function useDualAudioTranscript({
           }
 
           const audioOnlyStream = new MediaStream(sourceStream.getAudioTracks());
-          const recorder = mimeType
-            ? new MediaRecorder(audioOnlyStream, { mimeType })
-            : new MediaRecorder(audioOnlyStream);
-          recorderMimeTypeRef.current = recorder.mimeType || mimeType || recorderMimeTypeRef.current;
           const chunkMs = getChunkDurationMs(recorderProvider, sourceMode);
           const normalizedSelectedTranscribeProvider = String(transcribeProvider || 'auto').trim().toLowerCase();
+          const useLocalRecycleMode = normalizedSelectedTranscribeProvider === 'local';
           const useRequestDataMode = (
-            normalizedSelectedTranscribeProvider === 'local'
-            || (normalizedSelectedTranscribeProvider === 'auto' && sourceMode === 'system')
+            !useLocalRecycleMode
+            && normalizedSelectedTranscribeProvider === 'auto'
+            && sourceMode === 'system'
           );
 
-          recorder.ondataavailable = (event) => {
-            if (!enabledRef.current) return;
-            if (!event?.data || event.data.size <= 0) return;
-            if (event.data.size < MIN_CHUNK_BYTES) return;
-            enqueueChunk(event.data, sourceMode);
-          };
+          const buildRecorder = () => {
+            const recorder = mimeType
+              ? new MediaRecorder(audioOnlyStream, { mimeType })
+              : new MediaRecorder(audioOnlyStream);
+            recorderMimeTypeRef.current = recorder.mimeType || mimeType || recorderMimeTypeRef.current;
 
-          recorder.onerror = () => {
-            setError(`Audio recorder (${sourceMode}) failed. Stop and start listening again.`);
-          };
+            recorder.ondataavailable = (event) => {
+              if (!enabledRef.current) return;
+              if (!event?.data || event.data.size <= 0) return;
+              if (event.data.size < MIN_CHUNK_BYTES) return;
+              enqueueChunk(event.data, sourceMode);
+            };
 
-          recorder.onstart = () => {
-            updateListeningState();
-          };
+            recorder.onerror = () => {
+              setError(`Audio recorder (${sourceMode}) failed. Stop and start listening again.`);
+            };
 
-          recorder.onstop = () => {
-            const timer = requestDataTimersRef.current[sourceMode];
-            if (timer) {
-              clearInterval(timer);
-              requestDataTimersRef.current[sourceMode] = null;
-            }
-            if (recordersRef.current[sourceMode] === recorder) {
-              recordersRef.current[sourceMode] = null;
-            }
-            updateListeningState();
+            recorder.onstart = () => {
+              updateListeningState();
+            };
+
+            recorder.onstop = () => {
+              // Only clear the request-data interval for non-recycle modes;
+              // recycle mode manages its own timer via localRecycleTimersRef.
+              if (!useLocalRecycleMode) {
+                const timer = requestDataTimersRef.current[sourceMode];
+                if (timer) {
+                  clearInterval(timer);
+                  requestDataTimersRef.current[sourceMode] = null;
+                }
+              }
+              if (recordersRef.current[sourceMode] === recorder) {
+                recordersRef.current[sourceMode] = null;
+              }
+              updateListeningState();
+            };
+
+            return recorder;
           };
 
           if (!enabledRef.current || cancelled) return null;
-          if (recorder.state !== 'inactive') return recorder;
 
           try {
-            if (useRequestDataMode) {
+            if (useLocalRecycleMode) {
+              // For local Whisper, create a fresh MediaRecorder for each chunk
+              // so every chunk starts with valid codec init headers.
+              const firstRecorder = buildRecorder();
+              if (firstRecorder.state !== 'inactive') return firstRecorder;
+              firstRecorder.start();
+              recordersRef.current[sourceMode] = firstRecorder;
+
+              const scheduleRecycle = () => {
+                localRecycleTimersRef.current[sourceMode] = setTimeout(() => {
+                  if (!enabledRef.current) return;
+
+                  // Stop the current recorder — this fires ondataavailable with the buffered audio.
+                  const current = recordersRef.current[sourceMode];
+                  if (current && current.state === 'recording') {
+                    try { current.stop(); } catch { /* ignore */ }
+                  }
+
+                  // Create a brand new recorder for the next chunk.
+                  if (!enabledRef.current || !audioOnlyStream.active) return;
+                  const next = buildRecorder();
+                  try {
+                    next.start();
+                    recordersRef.current[sourceMode] = next;
+                    updateListeningState();
+                  } catch {
+                    setError(`Audio recorder failed to restart for ${sourceMode}. Stop and start listening again.`);
+                    return;
+                  }
+                  scheduleRecycle();
+                }, Math.max(900, chunkMs));
+              };
+
+              scheduleRecycle();
+              return firstRecorder;
+            } else if (useRequestDataMode) {
+              const recorder = buildRecorder();
+              if (recorder.state !== 'inactive') return recorder;
               recorder.start();
               requestDataTimersRef.current[sourceMode] = setInterval(() => {
                 if (!enabledRef.current || recorder.state !== 'recording') return;
                 try {
                   recorder.requestData();
                 } catch {
-                  // Ignore requestData race conditions during shutdown.
+                  // Ignore race conditions during shutdown.
                 }
               }, Math.max(900, chunkMs));
+              return recorder;
             } else {
+              const recorder = buildRecorder();
+              if (recorder.state !== 'inactive') return recorder;
               // Use timeslice mode to avoid stop/start gaps that can drop trailing words.
               recorder.start(Math.max(900, chunkMs));
+              return recorder;
             }
           } catch {
             setError(`Audio recorder failed to start for ${sourceMode}. Stop and start listening again.`);
             return null;
           }
-          return recorder;
+          return null;
         };
 
         const micRecorder = captureMic ? createRecorder('mic', micStream) : null;

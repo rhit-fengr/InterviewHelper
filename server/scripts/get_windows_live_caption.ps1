@@ -29,16 +29,14 @@ function Is-IgnoredCaptionText([string]$text) {
   $name = Normalize-Text($text)
   if ([string]::IsNullOrWhiteSpace($name)) { return $true }
   if ($name.Length -lt 2) { return $true }
-  if ($name.Length -gt 240) { return $true }
+  # Text with 4+ words and reasonable length is almost certainly real speech — accept immediately.
+  $wordCount = ($name -split '\s+').Count
+  if ($wordCount -ge 4 -and $name.Length -ge 20) { return $false }
   if ($name -match '^(Live captions|Captions|Settings|Close|Back|Feedback|字幕|设置|設定|偏好设置|偏好設定|首选项|關閉|返回)$') { return $true }
-  if ($name -match '(?i)address and search bar|search or type url|ready to show live captions|livecaptions-translator|sakirinn/livecaptions-translator') { return $true }
+  if ($name -match '(?i)^address and search bar$|^search or type url$|^ready to show live captions|^livecaptions-translator|sakirinn/livecaptions-translator') { return $true }
   if ($name -match '(?i)\bat master\b.*livecaptions-translator') { return $true }
   if ($name -match '(?i)^(include microphone audio|filter profanity|caption style|position|change language|preferences|learn more|expand subtitles)$') { return $true }
   if ($name -match '^(包括麦克风音频|包含麦克风音频|包括麥克風音訊|包含麥克風音訊|过滤粗俗语言|过滤脏话|字幕样式|字幕位置|更改语言|展开字幕|展開字幕)$') { return $true }
-  $wordCount = ($name -split '\s+').Count
-  if ($wordCount -gt 42) { return $true }
-  $sentenceMarks = ([regex]::Matches($name, '[.!?。！？]')).Count
-  if ($sentenceMarks -gt 4) { return $true }
   return $false
 }
 

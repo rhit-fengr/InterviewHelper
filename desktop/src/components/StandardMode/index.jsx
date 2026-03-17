@@ -18,7 +18,8 @@ import './StandardMode.css';
 
 const SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:4000';
 const MERGE_WINDOW_MS = 4_500;
-const SHORT_FRAGMENT_MAX_CHARS = 10;
+const SHORT_FRAGMENT_MAX_CHARS = 14;
+const MERGE_COMBINED_MAX_CHARS = 80;
 const DETECT_QUESTION_DEBOUNCE_MS = 650;
 const MIC_ROTATION_INTERVAL_MS = 2_200;
 
@@ -50,7 +51,7 @@ function shouldMergeTranscriptEntries(previousEntry, nextEntry) {
     return true;
   }
 
-  return prevText.length + nextText.length <= 56;
+  return prevText.length + nextText.length <= MERGE_COMBINED_MAX_CHARS;
 }
 
 export default function StandardMode({ onBack }) {
@@ -572,10 +573,16 @@ export default function StandardMode({ onBack }) {
     return () => clearTimeout(detectionTimeoutRef.current);
   }, []);
 
+  // Auto-scroll transcript to bottom on any content change (new entries AND merged updates).
+  // Derive a lightweight fingerprint from the last entry's text so merges also trigger scroll.
+  const transcriptScrollKey = transcriptEntries.length > 0
+    ? `${transcriptEntries.length}:${transcriptEntries[transcriptEntries.length - 1].text.length}:${transcriptEntries[transcriptEntries.length - 1].timestamp}`
+    : '';
+
   useEffect(() => {
     if (!transcriptScrollRef.current) return;
     transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
-  }, [transcriptEntries.length]);
+  }, [transcriptScrollKey]);
 
   // Save completed conversation turn (user question + assistant answer) to history
   useEffect(() => {

@@ -66,8 +66,9 @@ function getTranscribeProviderFromRequest(req) {
   }
 
   if (isTranscribeProviderConfigured('openai')) return 'openai';
-  if (isTranscribeProviderConfigured('local')) return 'local';
   if (isTranscribeProviderConfigured('gemini')) return 'gemini';
+  if (isTranscribeProviderConfigured('windows-live-captions')) return 'windows-live-captions';
+  if (isTranscribeProviderConfigured('local')) return 'local';
 
   return getProviderFromRequest(req);
 }
@@ -80,11 +81,10 @@ function getTranscribeProviderChain(req) {
     return [normalizeTranscribeProvider(explicitRaw)];
   }
 
-  // In auto mode, prefer cloud/local STT first for lower coupling to OS caption UI.
-  // Windows Live Captions remains a final fallback for system audio on supported Windows builds.
+  // In auto mode, keep the default path focused on the converged source-specific strategy.
   const preferredCandidates = sourceMode === 'system'
-    ? ['openai', 'local', 'gemini', 'windows-live-captions']
-    : ['openai', 'local', 'gemini'];
+    ? ['windows-live-captions', 'openai', 'gemini']
+    : ['openai', 'gemini'];
   const candidates = preferredCandidates.filter((provider) => (
     isTranscribeProviderConfigured(provider)
   ));

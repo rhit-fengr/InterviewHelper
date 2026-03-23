@@ -31,6 +31,10 @@ const TRANSCRIPT_NOISE_PATTERNS = [
   /字幕由[^\s,，。.!?？]{1,24}(?:提供|制作|製作)?/gi,
   /livecaptions-translator\/[^\s]+/gi,
 ];
+const TRANSCRIPT_NOISE_PREFIX_PATTERNS = [
+  /^(?:(?:change language|include microphone audio|preferences|address and search bar|address bar|search bar|search or type url)(?:\s+(?:change language|include microphone audio|preferences|address and search bar|address bar|search bar|search or type url))*)[\s:：\-|,.，。]*/i,
+  /^(?:(?:更改语言|切换语言|包括麦克风音频|包含麦克风音频|包含麥克風音訊|包括麥克風音訊|偏好设置|偏好設定|首选项|地址和搜索栏|地址列|搜索栏)(?:\s+(?:更改语言|切换语言|包括麦克风音频|包含麦克风音频|包含麥克風音訊|包括麥克風音訊|偏好设置|偏好設定|首选项|地址和搜索栏|地址列|搜索栏))*)[\s:：\-|,.，。]*/u,
+];
 const TRANSCRIPT_NOISE_ONLY_PATTERNS = [
   /^(感谢观看|謝謝觀看|谢谢观看|本视频到这里|本影片到這裡)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
   /^(点赞订阅|點讚訂閱|記得訂閱|记得订阅|别忘了订阅|別忘了訂閱|like and subscribe)(?:[^\p{L}\p{N}\u4e00-\u9fa5].*)?$/iu,
@@ -90,6 +94,10 @@ export function sanitizeTranscriptSegment(text = '') {
 
   for (const pattern of TRANSCRIPT_NOISE_PATTERNS) {
     cleaned = cleaned.replace(pattern, ' ');
+  }
+
+  for (const pattern of TRANSCRIPT_NOISE_PREFIX_PATTERNS) {
+    cleaned = cleaned.replace(pattern, '');
   }
 
   cleaned = cleaned
@@ -159,6 +167,19 @@ export function normalizeRecognitionLanguages(language = 'en-US') {
   return cleaned.length > 0 ? [...new Set(cleaned)] : ['en-US'];
 }
 
+/**
+ * Maps source mode to display label (MIC or SYSTEM)
+ * @param {string} sourceMode - 'mic', 'system', or 'mic-system'
+ * @returns {string} 'MIC', 'SYSTEM', or 'MIXED'
+ */
+export function formatSourceLabel(sourceMode = '') {
+  const normalized = String(sourceMode || '').trim().toLowerCase();
+  if (normalized === 'mic') return 'MIC';
+  if (normalized === 'system') return 'SYSTEM';
+  if (normalized === 'mic-system') return 'MIXED';
+  return 'UNKNOWN';
+}
+
 export function buildSessionExportText({
   transcript = '',
   transcriptEntries = [],
@@ -183,10 +204,11 @@ export function buildSessionExportText({
     for (const entry of transcriptEntries) {
       const ts = entry.timestamp ? new Date(entry.timestamp).toISOString() : now.toISOString();
       const speaker = entry.speaker || 'Unknown';
+      const source = formatSourceLabel(entry.sourceMode || entry.source || '');
       const lang = entry.language || 'unknown';
       const text = (entry.text || '').trim();
       if (!text) continue;
-      lines.push(`[${ts}] [${speaker}] [${lang}] ${text}`);
+      lines.push(`[${ts}] [${speaker}] [${source}] [${lang}] ${text}`);
     }
   } else {
     lines.push(transcript?.trim() || '(empty)');

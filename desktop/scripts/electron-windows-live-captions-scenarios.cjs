@@ -39,11 +39,18 @@ function run(command, args, options = {}) {
 function buildScenario(fixtures) {
   const fixtureById = Object.fromEntries(fixtures.map((fixture) => [fixture.id, fixture]));
   return {
-    name: 'windows-live-captions-mic-system-combined',
+    name: 'windows-live-captions-mic-system-split',
     fixtures,
     capture: {
       mic: {
-        emissions: [],
+        emissions: [
+          {
+            fixtureId: fixtureById['mic-answer-mono'].id,
+            atMs: 1800,
+            delayMs: 25,
+            text: fixtureById['mic-answer-mono'].text,
+          },
+        ],
       },
       system: {
         eager: true,
@@ -53,12 +60,6 @@ function buildScenario(fixtures) {
             atMs: 320,
             delayMs: 30,
             text: fixtureById['system-question-stereo'].text,
-          },
-          {
-            fixtureId: fixtureById['mic-answer-mono'].id,
-            atMs: 1800,
-            delayMs: 25,
-            text: fixtureById['mic-answer-mono'].text,
           },
         ],
       },
@@ -71,7 +72,7 @@ function buildScenario(fixtures) {
     ],
     answer: {
       events: [
-        { data: { text: 'Mocked answer from the WLC combined scenario.' }, delayMs: 60 },
+        { data: { text: 'Mocked answer from the WLC split-route scenario.' }, delayMs: 60 },
         { data: { done: true } },
       ],
     },
@@ -108,7 +109,8 @@ async function main() {
       await page.waitForLoadState('domcontentloaded');
       await page.getByRole('heading', { name: 'Caption Mode Setup' }).waitFor({ state: 'visible' });
 
-      await page.getByLabel('Transcription Provider').selectOption('windows-live-captions');
+      await page.getByLabel('Microphone Provider').selectOption('webspeech');
+      await page.getByLabel('System Audio Provider').selectOption('windows-live-captions');
       await page.locator('button.btn-primary').click();
 
       await page.getByRole('heading', { name: 'Session Settings' }).waitFor({ state: 'visible' });
@@ -123,19 +125,19 @@ async function main() {
       await waitForBodyText(page, 'My biggest strength is staying calm under pressure and creating clarity for the team.');
 
       const bodyText = await page.evaluate(() => document.body?.innerText || '');
-      assert(bodyText.includes('Captions=windows-live-captions + mic-assist'), 'expected combined WLC label');
-      assert(!bodyText.includes('Mic=openai -> local -> gemini'), 'WLC combined mode should not keep a separate mic cloud STT label');
-      assert(!bodyText.includes('Rate limit reached while transcribing audio.'), 'WLC combined mode should not surface cloud STT rate limit warnings');
-      assert(!bodyText.includes('Transcription request timed out repeatedly.'), 'WLC combined mode should not surface repeated timeout warnings');
-      assert(!bodyText.includes('Please provide audio file'), 'WLC combined mode should not render backend audio validation errors as transcript text');
-      assert(!bodyText.includes('请提供音频文件'), 'WLC combined mode should not render backend audio validation errors as transcript text');
+      assert(bodyText.includes('Mic=webspeech | System=windows-live-captions'), 'expected split mic/system label');
+      assert(!bodyText.includes('windows-live-captions + mic-assist'), 'split routing should not keep the old combined WLC label');
+      assert(!bodyText.includes('Rate limit reached while transcribing audio.'), 'split mic/system WLC mode should not surface cloud STT rate limit warnings');
+      assert(!bodyText.includes('Transcription request timed out repeatedly.'), 'split mic/system WLC mode should not surface repeated timeout warnings');
+      assert(!bodyText.includes('Please provide audio file'), 'split mic/system WLC mode should not render backend audio validation errors as transcript text');
+      assert(!bodyText.includes('请提供音频文件'), 'split mic/system WLC mode should not render backend audio validation errors as transcript text');
 
       const transcriptEntries = page.locator('.transcript-entry');
       const entryCount = await transcriptEntries.count();
-      assert(entryCount >= 2, 'expected multiple transcript entries from the combined WLC flow');
+      assert(entryCount >= 2, 'expected multiple transcript entries from the split WLC flow');
 
       await page.screenshot({ path: screenshotPath, fullPage: true });
-      console.log(`Electron Windows Live Captions combined scenario passed. Screenshot: ${screenshotPath}`);
+      console.log(`Electron Windows Live Captions split-route scenario passed. Screenshot: ${screenshotPath}`);
       return;
     } catch (error) {
       lastError = error;

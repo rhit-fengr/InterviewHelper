@@ -22,6 +22,9 @@ const SHORT_FRAGMENT_MAX_CHARS = 14;
 const MERGE_COMBINED_MAX_CHARS = 80;
 const DETECT_QUESTION_DEBOUNCE_MS = 650;
 const MIC_ROTATION_INTERVAL_MS = 2_200;
+const CROSS_SOURCE_DEDUPE_WINDOW_MS = 6_000;
+const CROSS_SOURCE_MIN_CHARS = 8;
+const CROSS_SOURCE_MAX_LENGTH_RATIO = 1.35;
 
 function joinTranscriptText(previousText = '', currentText = '') {
   const left = String(previousText || '').trim();
@@ -52,6 +55,46 @@ function shouldMergeTranscriptEntries(previousEntry, nextEntry) {
   }
 
   return prevText.length + nextText.length <= MERGE_COMBINED_MAX_CHARS;
+}
+
+function isLikelyCrossSourceDuplicate(leftText = '', rightText = '') {
+  const left = String(leftText || '').trim();
+  const right = String(rightText || '').trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length <= right.length ? right : left;
+  if (shorter.length < CROSS_SOURCE_MIN_CHARS) return false;
+  if (!longer.includes(shorter)) return false;
+
+  const overlapRatio = shorter.length / longer.length;
+  const lengthRatio = longer.length / shorter.length;
+  return overlapRatio >= 0.75 && lengthRatio <= CROSS_SOURCE_MAX_LENGTH_RATIO;
+}
+
+function shouldDropCrossSourceDuplicate(previousEntry, nextEntry) {
+  if (!previousEntry || !nextEntry) return false;
+
+  const previousSource = String(previousEntry.sourceMode || '').trim().toLowerCase();
+  const nextSource = String(nextEntry.sourceMode || '').trim().toLowerCase();
+  if (!previousSource || !nextSource || previousSource === nextSource) return false;
+
+  const previousTs = Number(previousEntry.timestamp) || 0;
+  const nextTs = Number(nextEntry.timestamp) || 0;
+  if (!previousTs || !nextTs || nextTs - previousTs > CROSS_SOURCE_DEDUPE_WINDOW_MS) return false;
+
+  if (!isLikelyCrossSourceDuplicate(previousEntry.text, nextEntry.text)) return false;
+
+  if (nextSource === 'system' && previousSource === 'mic') {
+    return true;
+  }
+
+  if (nextSource === 'mic' && previousSource === 'system') {
+    return guessSpeakerLabel(nextEntry.text) === 'Interviewer';
+  }
+
+  return false;
 }
 
 export default function StandardMode({ onBack }) {
@@ -181,17 +224,19 @@ export default function StandardMode({ onBack }) {
     : [setup.interviewLang || 'en-US'];
   const isElectronRuntime = typeof window !== 'undefined' && window.electronAPI?.isElectron;
   const audioInputMode = session.audioInputMode || 'mic';
-  const normalizedSttProvider = String(setup.sttProvider || 'auto').trim().toLowerCase();
-  const windowsLiveCaptionsMicAssist = setup.windowsLiveCaptionsIncludeMicrophoneAudio !== false;
-  const useProviderDrivenMicOnly = audioInputMode === 'mic' && isElectronRuntime;
-  const useMicOnlyWindowsCaptions = useProviderDrivenMicOnly && normalizedSttProvider === 'windows-live-captions';
-  const useCombinedWindowsCaptions = (
-    audioInputMode === 'mic-system'
-    && normalizedSttProvider === 'windows-live-captions'
-    && windowsLiveCaptionsMicAssist
+  const micProvider = String(setup.micProvider || 'webspeech').trim().toLowerCase();
+  const systemProvider = String(setup.systemProvider || 'windows-live-captions').trim().toLowerCase();
+  const windowsLiveCaptionsMicAssist = setup.windowsLiveCaptionsMicrophoneAssist === true;
+  const isDualMode = audioInputMode === 'mic-system';
+  const micUsesWebSpeech = micProvider === 'webspeech';
+  const useMicWebSpeech = isRunning && (audioInputMode === 'mic' || isDualMode) && micUsesWebSpeech;
+  const useMicProviderCapture = isRunning && (audioInputMode === 'mic' || isDualMode) && !micUsesWebSpeech;
+  const useSystemProviderCapture = isRunning && isDualMode;
+  const canToggleWindowsLiveCaptionsWindow = (
+    isElectronRuntime
+    && useSystemProviderCapture
+    && systemProvider === 'windows-live-captions'
   );
-  const useDualAudioForCurrentMode = audioInputMode === 'mic-system' || useProviderDrivenMicOnly;
-  const canToggleWindowsLiveCaptionsWindow = isElectronRuntime && normalizedSttProvider === 'windows-live-captions';
 
   const handleWindowsLiveCaptionsStatusChange = useCallback((status = {}) => {
     if (typeof status.hidden === 'boolean') {
@@ -265,11 +310,9 @@ export default function StandardMode({ onBack }) {
         : sourceMode
     );
     const sourceSpeaker = speakerFromSourceMode(effectiveSourceMode);
-    const speaker = useCombinedWindowsCaptions
-      ? guessSpeakerLabel(cleanedText)
-      : providedSpeaker || (
-        sourceSpeaker !== 'Unknown' ? sourceSpeaker : guessSpeakerLabel(cleanedText)
-      );
+    const speaker = providedSpeaker || (
+      sourceSpeaker !== 'Unknown' ? sourceSpeaker : guessSpeakerLabel(cleanedText)
+    );
     setTranscriptEntries((prev) => {
       const nextEntry = {
         text: cleanedText,
@@ -279,6 +322,14 @@ export default function StandardMode({ onBack }) {
         sourceMode: effectiveSourceMode || 'unknown',
       };
       if (prev.length > 0) {
+        const recentEntries = prev.slice(-6);
+        const matchingCrossSourceEntry = recentEntries.find((entry) => (
+          shouldDropCrossSourceDuplicate(entry, nextEntry)
+        ));
+        if (matchingCrossSourceEntry) {
+          return prev;
+        }
+
         const previousEntry = prev[prev.length - 1];
         if (shouldMergeTranscriptEntries(previousEntry, nextEntry)) {
           const mergedEntry = {
@@ -291,72 +342,77 @@ export default function StandardMode({ onBack }) {
       }
       return [...prev, nextEntry].slice(-500);
     });
-  }, [audioInputMode, useCombinedWindowsCaptions]);
+  }, [audioInputMode]);
 
   const webSpeechTranscript = useTranscript({
-    enabled: isRunning && audioInputMode === 'mic' && !useProviderDrivenMicOnly,
+    enabled: useMicWebSpeech,
     language: interviewLangs,
     onTranscriptChange: handleMicTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
     rotationIntervalMs: MIC_ROTATION_INTERVAL_MS,
   });
 
-  const dualAudioTranscript = useDualAudioTranscript({
-    enabled: isRunning && useDualAudioForCurrentMode,
+  const micProviderTranscript = useDualAudioTranscript({
+    enabled: useMicProviderCapture,
     language: interviewLangs,
     provider: setup.aiProvider,
-    transcribeProvider: setup.sttProvider,
+    transcribeProvider: micProvider,
+    autoHideWindowsLiveCaptions: false,
+    includeWindowsLiveCaptionsMicrophoneAudio: false,
+    captureMic: true,
+    captureSystem: false,
+    onTranscriptChange: handleMicTranscriptUpdate,
+    onFinalSegment: handleFinalSegment,
+    onRuntimeStateChange: handleRuntimeStateChange,
+  });
+
+  const systemProviderTranscript = useDualAudioTranscript({
+    enabled: useSystemProviderCapture,
+    language: interviewLangs,
+    provider: setup.aiProvider,
+    transcribeProvider: systemProvider,
     autoHideWindowsLiveCaptions: setup.autoHideWindowsLiveCaptions === true,
     includeWindowsLiveCaptionsMicrophoneAudio:
-      normalizedSttProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist,
-    captureMic: audioInputMode === 'mic-system'
-      ? !useCombinedWindowsCaptions
-      : !useMicOnlyWindowsCaptions,
-    captureSystem: audioInputMode === 'mic-system' || useMicOnlyWindowsCaptions,
-    onTranscriptChange: audioInputMode === 'mic-system'
-      ? handleTranscriptUpdate
-      : handleMicTranscriptUpdate,
+      systemProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist,
+    captureMic: false,
+    captureSystem: true,
+    onTranscriptChange: handleSystemTranscriptUpdate,
     onFinalSegment: handleFinalSegment,
     onWindowsLiveCaptionsStatusChange: handleWindowsLiveCaptionsStatusChange,
     onRuntimeStateChange: handleRuntimeStateChange,
   });
 
-  const transcript = useDualAudioForCurrentMode
-    ? dualAudioTranscript.transcript
-    : webSpeechTranscript.transcript;
-  const isListening = useDualAudioForCurrentMode
-    ? dualAudioTranscript.isListening
-    : webSpeechTranscript.isListening;
-  const transcriptError = useDualAudioForCurrentMode
-    ? dualAudioTranscript.error
-    : webSpeechTranscript.error;
-  const activeLanguage = useDualAudioForCurrentMode
-    ? dualAudioTranscript.activeLanguage
-    : webSpeechTranscript.activeLanguage;
-  const systemSttLabel = normalizedSttProvider === 'auto'
-    ? 'openai -> local -> gemini -> windows-live-captions'
-    : normalizedSttProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist
-      ? 'windows-live-captions + mic-assist'
-      : normalizedSttProvider;
-  const micSttLabel = normalizedSttProvider === 'auto'
-    ? 'openai -> local -> gemini'
-    : normalizedSttProvider === 'windows-live-captions'
-      ? 'openai -> local -> gemini'
-      : normalizedSttProvider;
-  const sttDisplayLabel = useCombinedWindowsCaptions
-    ? 'Captions=windows-live-captions + mic-assist'
-    : audioInputMode === 'mic-system'
-    ? `Mic=${micSttLabel} | System=${systemSttLabel}`
-    : useProviderDrivenMicOnly
-      ? `Mic=${useMicOnlyWindowsCaptions ? 'windows-live-captions + mic-assist' : micSttLabel}`
-      : 'Mic=webspeech';
-  const runtimeStatusLabel = runtime.status || (isRunning ? 'starting' : 'idle');
-  const runtimeSourceLabel = audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic';
-  const runtimeProviderLabel = runtime.diagnostics.providerUsed || (
-    normalizedSttProvider === 'auto'
-      ? 'auto'
-      : normalizedSttProvider
+  const activeMicTranscript = micUsesWebSpeech ? webSpeechTranscript : micProviderTranscript;
+  const transcript = [
+    activeMicTranscript.transcript,
+    useSystemProviderCapture ? systemProviderTranscript.transcript : '',
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join('\n');
+  const isListening = Boolean(
+    activeMicTranscript.isListening
+    || (useSystemProviderCapture && systemProviderTranscript.isListening)
   );
+  const transcriptError = [
+    activeMicTranscript.error,
+    useSystemProviderCapture ? systemProviderTranscript.error : '',
+  ]
+    .filter(Boolean)
+    .join(' | ');
+  const activeLanguage = activeMicTranscript.activeLanguage
+    || (useSystemProviderCapture ? systemProviderTranscript.activeLanguage : '')
+    || interviewLangs[0];
+  const micSttLabel = micUsesWebSpeech ? 'webspeech' : micProvider;
+  const systemSttLabel = useSystemProviderCapture ? systemProvider : 'off';
+  const sttDisplayLabel = isDualMode
+    ? `Mic=${micSttLabel} | System=${systemSttLabel}${windowsLiveCaptionsMicAssist && systemProvider === 'windows-live-captions' ? ' | WLC mic assist' : ''}`
+    : `Mic=${micSttLabel}`;
+  const runtimeStatusLabel = runtime.status || (isRunning ? 'starting' : 'idle');
+  const runtimeSourceLabel = isDualMode ? 'Mic + System' : 'Mic';
+  const runtimeProviderLabel = isDualMode
+    ? `${micSttLabel} + ${systemSttLabel}`
+    : micSttLabel;
 
   useEffect(() => {
     setWindowsCaptionsWindowHidden(setup.autoHideWindowsLiveCaptions === true);
@@ -561,7 +617,8 @@ export default function StandardMode({ onBack }) {
       });
       clearAnswer();
       webSpeechTranscript.clearTranscript();
-      dualAudioTranscript.clearTranscript();
+      micProviderTranscript.clearTranscript();
+      systemProviderTranscript.clearTranscript();
       setTranscriptEntries([]);
       lastAutoAnswerRef.current = null;
       micLiveTranscriptRef.current = '';
@@ -662,13 +719,14 @@ export default function StandardMode({ onBack }) {
               pendingQuestionRef.current = null;
               lastAutoAnswerRef.current = null;
               clearTimeout(detectionTimeoutRef.current);
-              detectionTimeoutRef.current = null;
-              clearAnswer();
-              webSpeechTranscript.clearTranscript();
-              dualAudioTranscript.clearTranscript();
-              micLiveTranscriptRef.current = '';
-              systemLiveTranscriptRef.current = '';
-              setLastQuestion('');
+               detectionTimeoutRef.current = null;
+               clearAnswer();
+               webSpeechTranscript.clearTranscript();
+               micProviderTranscript.clearTranscript();
+               systemProviderTranscript.clearTranscript();
+               micLiveTranscriptRef.current = '';
+               systemLiveTranscriptRef.current = '';
+               setLastQuestion('');
               setTranscriptEntries([]);
             }}
           >
@@ -742,12 +800,12 @@ export default function StandardMode({ onBack }) {
         <div className="transcript-box">
           <div className="box-label-row">
             <span className="box-label">🎤 Transcript</span>
-            <span className="transcript-lang-badge">
-              Source: {audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic only'} |{' '}
-              STT: {sttDisplayLabel} |{' '}
-              Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
-              {audioInputMode === 'mic' && interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
-            </span>
+              <span className="transcript-lang-badge">
+                Source: {audioInputMode === 'mic-system' ? 'Mic + System' : 'Mic only'} |{' '}
+                STT: {sttDisplayLabel} |{' '}
+                Listening: {languageLabelByValue.current[activeLanguage] || activeLanguage}
+                {audioInputMode === 'mic' && interviewLangs.length > 1 ? ' (auto-cycle)' : ''}
+              </span>
           </div>
 
           <div className="transcript-scroll" ref={transcriptScrollRef}>

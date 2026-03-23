@@ -102,7 +102,7 @@ LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8765/transcribe
 
 You can also run `local-whisper-service/start_local_whisper.bat` on Windows.
 
-In Electron runtime, when `audioInputMode=Mic + System` and `Transcription Provider` is `Local`, the app attempts to auto-start local-whisper service and auto-release it when you stop listening.
+In Electron runtime, the app only attempts to auto-start local-whisper service when you explicitly choose `Local Whisper (Experimental)` for the microphone or system provider.
 If needed, you can point Electron's health check to a different local port with `LOCAL_WHISPER_HEALTH_URL` (desktop app process env).
 For release installers, run `cd desktop && npm run prepare:local-whisper-runtime` before `build:win*` to embed Python runtime + deps + model into the package.
 
@@ -137,7 +137,8 @@ Open the Expo Go app on your phone and scan the QR code, or run `npm run ios` / 
 | Field | Description |
 |---|---|
 | AI Provider | `OpenAI` or `Google Gemini` |
-| Transcription Provider | `Auto` (System: Windows Live Captions -> OpenAI -> Local -> Gemini), `Windows Live Captions (System only)`, `OpenAI`, `Gemini`, or `Local Whisper Service` |
+| Microphone Provider | `Browser Speech (Recommended)`, `OpenAI`, `Gemini`, or `Local Whisper (Experimental)` |
+| System Audio Provider | `Windows Live Captions (Recommended on Windows)`, `OpenAI`, `Gemini`, or `Local Whisper (Experimental)` |
 | Topic | Interview category (Software Engineering, Behavioral, etc.) |
 | Interview Language | One or more interviewer languages (auto-cycled when multiple are selected) |
 | Answer Language | Language for AI-generated answers |
@@ -342,13 +343,13 @@ Subtitle-plugin evolution plan:
 - `Mic only` mode already uses browser-native Web Speech API (Chrome/Edge runtime speech engine), no cloud STT required.
 
 **Mic + System has no transcript output**
-- In `Interview Setup`, for `Mic + System`, prefer **Transcription Provider = Windows Live Captions** (Win11) or `Auto` (System: `Windows Live Captions -> OpenAI -> Local -> Gemini`).
+- In `Interview Setup`, for `Mic + System`, keep the recommended split route: **Microphone Provider = Browser Speech** and **System Audio Provider = Windows Live Captions**.
 - If using `Windows Live Captions`, press `Win + Ctrl + L` first, complete language model download, and keep Live Captions enabled.
 - In Windows Live Captions settings, ensure the spoken source language is set correctly; otherwise recognition quality drops sharply.
 - Gemini chunk transcription is "best effort" and can return empty segments on short windows; this is not as reliable as Whisper-style STT.
-- If using `OpenAI` transcription, set `OPENAI_API_KEY` in `server/.env`.
-- If you intentionally use `Gemini` transcription, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).
-- For non-cloud setup, start `local-whisper-service`, configure `LOCAL_TRANSCRIBE_URL`, and choose `Local Whisper Service` (or `Auto`).
+- If you explicitly use `OpenAI` transcription for either source, set `OPENAI_API_KEY` in `server/.env`.
+- If you intentionally use `Gemini` transcription for either source, set `GEMINI_API_KEY` and increase spoken segment length (very short bursts may return empty text).
+- For non-cloud setup, start `local-whisper-service`, configure `LOCAL_TRANSCRIBE_URL`, and explicitly choose `Local Whisper (Experimental)` for the source you want to test.
 - If `start_local_whisper.bat` appears to do nothing, open `cmd` first and run it there to read the error; most common root causes are missing Python or failed pip install.
 - If you see `Python was not found` or local-whisper health-check timeout, install Python 3.10+ and ensure `python`/`py` is available in PATH, then relaunch the app.
 - If you are using packaged release with bundled runtime, this Python requirement is only for build machines, not end users.

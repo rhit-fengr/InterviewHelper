@@ -108,7 +108,7 @@ Run these checks on a clean Windows VM or machine:
 - Start server (`server/npm run dev`), then run desktop app.
 - Start listening, verify transcript updates.
 - Trigger one AI answer using manual input.
-- Set `Audio Input Mode = Mic + System`, `Transcription Provider = Local` and verify local STT works even when system Python is not installed on the test machine.
+- Set `Audio Input Mode = Mic + System`, keep `Microphone Provider = Browser Speech`, `System Audio Provider = Windows Live Captions`, and verify both lanes keep updating without collapsing into one route.
 
 4. Settings behavior
 - Change font size and verify answer panel reflects it.

@@ -551,14 +551,13 @@ export function useDualAudioTranscript({
           && captureSystem
         );
         const shouldEnsureLocalService = (
-          (captureMic && (normalizedMicTranscribeProvider === 'local' || normalizedMicTranscribeProvider === 'auto'))
-          || (captureSystem && (normalizedSystemTranscribeProvider === 'local' || normalizedSystemTranscribeProvider === 'auto'))
+          (captureMic && normalizedMicTranscribeProvider === 'local')
+          || (captureSystem && normalizedSystemTranscribeProvider === 'local')
         );
         const shouldEnsureWindowsLiveCaptions = (
           captureSystem
           && (
             normalizedSystemTranscribeProvider === 'windows-live-captions'
-            || normalizedSystemTranscribeProvider === 'auto'
           )
           && window?.electronAPI?.ensureWindowsLiveCaptions
         );
@@ -914,6 +913,7 @@ export function useDualAudioTranscript({
   const clearTranscript = () => {
     transcriptRef.current = '';
     lastSegmentsBySourceRef.current = { mic: '', system: '' };
+    recentSegmentsBySourceRef.current = { mic: [], system: [] };
     setTranscript('');
   };
 

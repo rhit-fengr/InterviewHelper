@@ -5,12 +5,15 @@ import {
   RESPONSE_STYLES,
   ANSWER_LENGTHS,
   DETECTION_SENSITIVITIES,
+  MIC_PROVIDERS,
+  SYSTEM_PROVIDERS,
 } from '../../constants';
 import { getProfile, updateProfile } from '../../utils/api';
 import './MoreSettings.css';
 
 export default function MoreSettings({ onBack }) {
   const {
+    setup, updateSetup,
     personalInfo, updatePersonalInfo,
     answerSettings, updateAnswerSettings,
     displaySettings, updateDisplaySettings,
@@ -19,6 +22,14 @@ export default function MoreSettings({ onBack }) {
   } = useInterviewStore();
 
   const isAuthenticated = !!auth.token && !!auth.user;
+  const autoHideWindowsLiveCaptions = setup.autoHideWindowsLiveCaptions === true;
+  const windowsLiveCaptionsMicrophoneAssist = setup.windowsLiveCaptionsMicrophoneAssist === true;
+  const micProvider = setup.micProvider || 'webspeech';
+  const systemProvider = setup.systemProvider || 'windows-live-captions';
+  const showWindowsLiveCaptionsControls = (
+    systemProvider === 'windows-live-captions'
+    || windowsLiveCaptionsMicrophoneAssist
+  );
   const [syncStatus, setSyncStatus] = useState(''); // '', 'pushing', 'pulling', 'push-ok', 'pull-ok', 'error'
   const [syncError, setSyncError] = useState('');
 
@@ -93,6 +104,64 @@ export default function MoreSettings({ onBack }) {
           Running in web preview (`localhost:3000`). Desktop-only settings are shown but currently disabled.
         </div>
       )}
+
+      <section className="settings-section">
+        <h3 className="section-title">Caption Capture</h3>
+
+        <div className="form-group">
+          <label className="form-label">Microphone Provider</label>
+          <select
+            className="form-select"
+            value={micProvider}
+            onChange={(e) => updateSetup({ micProvider: e.target.value })}
+          >
+            {MIC_PROVIDERS.map((provider) => (
+              <option key={provider.value} value={provider.value}>{provider.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">System Audio Provider</label>
+          <select
+            className="form-select"
+            value={systemProvider}
+            onChange={(e) => updateSetup({ systemProvider: e.target.value })}
+          >
+            {SYSTEM_PROVIDERS.map((provider) => (
+              <option key={provider.value} value={provider.value}>{provider.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {showWindowsLiveCaptionsControls && (
+          <>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={autoHideWindowsLiveCaptions}
+                onChange={(e) => updateSetup({ autoHideWindowsLiveCaptions: e.target.checked })}
+              />
+              <div>
+                <div className="checkbox-label">Auto-hide Windows Live Captions after text starts</div>
+                <div className="checkbox-desc">Non-blocking preference. If hiding fails, listening should continue.</div>
+              </div>
+            </label>
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={windowsLiveCaptionsMicrophoneAssist}
+                onChange={(e) => updateSetup({ windowsLiveCaptionsMicrophoneAssist: e.target.checked })}
+              />
+              <div>
+                <div className="checkbox-label">Use Windows Live Captions microphone assist</div>
+                <div className="checkbox-desc">Experimental / Compatibility only. Do not rely on it as the main mic path.</div>
+              </div>
+            </label>
+          </>
+        )}
+      </section>
 
       {/* Personal Info */}
       <section className="settings-section">

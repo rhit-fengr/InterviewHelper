@@ -248,6 +248,77 @@ function installMediaDevicesHarness(config) {
   });
 }
 
+function installSpeechRecognitionHarness(config) {
+  const runtime = window.__INTERVIEW_HELPER_E2E_RUNTIME__;
+  if (!runtime) return;
+
+  class MockSpeechRecognition {
+    constructor() {
+      this.continuous = true;
+      this.interimResults = true;
+      this.lang = 'en-US';
+      this.onstart = null;
+      this.onresult = null;
+      this.onerror = null;
+      this.onend = null;
+      this._running = false;
+      this._timers = [];
+    }
+
+    start() {
+      if (this._running) return;
+      this._running = true;
+      runtime.scheduleSourceEmissions('mic', config.capture.mic.emissions || []);
+      this.onstart?.();
+
+      const emissions = config.capture.mic.emissions || [];
+      emissions.forEach((emission, index) => {
+        const timer = setTimeout(() => {
+          if (!this._running) return;
+          const queued = runtime.dequeueTranscript('mic');
+          const text = String(queued?.text || emission?.text || '').trim();
+          if (!text || typeof this.onresult !== 'function') return;
+          const result = {
+            0: {
+              transcript: text,
+              confidence: 0.96,
+            },
+            isFinal: true,
+            length: 1,
+          };
+          this.onresult({
+            resultIndex: 0,
+            results: [result],
+          });
+
+          if (index === emissions.length - 1) {
+            const endTimer = setTimeout(() => {
+              this.stop();
+            }, 60);
+            this._timers.push(endTimer);
+          }
+        }, Math.max(0, Number(emission.atMs) || 0) + 180);
+        this._timers.push(timer);
+      });
+    }
+
+    stop() {
+      if (!this._running) return;
+      this._running = false;
+      this._timers.forEach((timer) => clearTimeout(timer));
+      this._timers = [];
+      this.onend?.();
+    }
+
+    abort() {
+      this.stop();
+    }
+  }
+
+  window.SpeechRecognition = MockSpeechRecognition;
+  window.webkitSpeechRecognition = MockSpeechRecognition;
+}
+
 function findDetectedQuestion(config, transcript = '') {
   const text = String(transcript || '');
   for (const matcher of config.detectQuestion) {
@@ -338,4 +409,5 @@ export function installE2EHarness(rawConfig) {
   installMediaDevicesHarness(config);
   installFetchHarness(config);
   installElectronHarness(config);
+  installSpeechRecognitionHarness(config);
 }

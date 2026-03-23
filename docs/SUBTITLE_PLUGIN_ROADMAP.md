@@ -24,13 +24,13 @@ This document defines the next-step plan to evolve Interview AI Hamburger from i
 
 1. Decouple providers:
 - LLM provider (`setup.aiProvider`) for answer generation.
-- STT provider (`setup.sttProvider`) for transcription.
+- Source-specific STT providers (`setup.micProvider`, `setup.systemProvider`) for transcription.
 
 2. Provider strategy:
-- `OpenAI Whisper` for stable chunk transcription (default when configured).
-- `Gemini` as best-effort fallback.
-- `Browser-native Web Speech` for mic-only lightweight mode.
-- `Local Whisper Service` adapter (`LOCAL_TRANSCRIBE_URL`) for no-cloud/offline-friendly setups.
+- `Browser-native Web Speech` as the recommended microphone default.
+- `Windows Live Captions` as the recommended Windows system-audio route.
+- `OpenAI Whisper` or `Gemini` as explicit chunk-STT alternatives when needed.
+- `Local Whisper Service` adapter (`LOCAL_TRANSCRIBE_URL`) as an experimental/offline-friendly option, not the default path.
 - Optional future provider adapters:
   - Azure Speech (Windows-friendly enterprise option)
   - Google Cloud Speech-to-Text (dedicated STT engine)

@@ -3,6 +3,8 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 
 const PERSIST_KEY = 'interview-ai-hamburger-storage';
 const LEGACY_PERSIST_KEY = 'interview-hammer-storage';
+const MIC_PROVIDERS = new Set(['webspeech', 'openai', 'gemini', 'local']);
+const SYSTEM_PROVIDERS = new Set(['windows-live-captions', 'openai', 'gemini', 'local']);
 
 const storage = createJSONStorage(() => ({
   getItem: (name) => {
@@ -17,20 +19,122 @@ const storage = createJSONStorage(() => ({
   removeItem: (name) => window.localStorage.removeItem(name),
 }));
 
+function normalizeLanguageList(value) {
+  const values = Array.isArray(value) ? value : [value];
+  const cleaned = values
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  return cleaned.length > 0 ? [...new Set(cleaned)] : ['en-US'];
+}
+
+function normalizeMicProvider(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return MIC_PROVIDERS.has(normalized) ? normalized : 'webspeech';
+}
+
+function normalizeSystemProvider(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return SYSTEM_PROVIDERS.has(normalized) ? normalized : 'windows-live-captions';
+}
+
+function deriveSourceProvidersFromLegacySttProvider(sttProvider = 'auto') {
+  const normalized = String(sttProvider || 'auto').trim().toLowerCase();
+
+  if (normalized === 'windows-live-captions') {
+    return {
+      micProvider: 'webspeech',
+      systemProvider: 'windows-live-captions',
+      windowsLiveCaptionsMicrophoneAssist: true,
+    };
+  }
+
+  if (normalized === 'local') {
+    return {
+      micProvider: 'local',
+      systemProvider: 'local',
+      windowsLiveCaptionsMicrophoneAssist: false,
+    };
+  }
+
+  if (normalized === 'openai' || normalized === 'gemini') {
+    return {
+      micProvider: normalized,
+      systemProvider: normalized,
+      windowsLiveCaptionsMicrophoneAssist: false,
+    };
+  }
+
+  return {
+    micProvider: 'webspeech',
+    systemProvider: 'windows-live-captions',
+    windowsLiveCaptionsMicrophoneAssist: false,
+  };
+}
+
+export function getDefaultSetup() {
+  return {
+    aiProvider: 'openai',
+    sttProvider: 'auto',
+    micProvider: 'webspeech',
+    systemProvider: 'windows-live-captions',
+    autoHideWindowsLiveCaptions: false,
+    windowsLiveCaptionsIncludeMicrophoneAudio: false,
+    windowsLiveCaptionsMicrophoneAssist: false,
+    topic: 'software-engineering',
+    interviewLangs: ['en-US'],
+    answerLang: 'en-US',
+    customInstructions: '',
+  };
+}
+
+export function normalizeSetup(input = {}, options = {}) {
+  const defaults = getDefaultSetup();
+  const next = { ...defaults, ...(input || {}) };
+  const presenceSource = options?.presenceSource && typeof options.presenceSource === 'object'
+    ? options.presenceSource
+    : input;
+  const hasMicProvider = typeof presenceSource?.micProvider === 'string' && presenceSource.micProvider.trim();
+  const hasSystemProvider = typeof presenceSource?.systemProvider === 'string' && presenceSource.systemProvider.trim();
+  const hasCanonicalAssist = typeof presenceSource?.windowsLiveCaptionsMicrophoneAssist === 'boolean';
+  const hasLegacyAssist = typeof presenceSource?.windowsLiveCaptionsIncludeMicrophoneAudio === 'boolean';
+
+  const legacyMapping = deriveSourceProvidersFromLegacySttProvider(next.sttProvider);
+  next.micProvider = hasMicProvider
+    ? normalizeMicProvider(next.micProvider)
+    : legacyMapping.micProvider;
+  next.systemProvider = hasSystemProvider
+    ? normalizeSystemProvider(next.systemProvider)
+    : legacyMapping.systemProvider;
+
+  if (hasCanonicalAssist) {
+    next.windowsLiveCaptionsMicrophoneAssist = input.windowsLiveCaptionsMicrophoneAssist === true;
+  } else if (hasLegacyAssist) {
+    next.windowsLiveCaptionsMicrophoneAssist = input.windowsLiveCaptionsIncludeMicrophoneAudio === true;
+  } else if (!hasMicProvider || !hasSystemProvider) {
+    next.windowsLiveCaptionsMicrophoneAssist = legacyMapping.windowsLiveCaptionsMicrophoneAssist;
+  } else {
+    next.windowsLiveCaptionsMicrophoneAssist = defaults.windowsLiveCaptionsMicrophoneAssist;
+  }
+
+  next.windowsLiveCaptionsIncludeMicrophoneAudio = next.windowsLiveCaptionsMicrophoneAssist;
+  next.autoHideWindowsLiveCaptions = next.autoHideWindowsLiveCaptions === true;
+  next.interviewLangs = normalizeLanguageList(next.interviewLangs || next.interviewLang);
+  return next;
+}
+
+function extractPersistedState(persistedState) {
+  if (!persistedState || typeof persistedState !== 'object') return {};
+  if (persistedState.state && typeof persistedState.state === 'object') {
+    return persistedState.state;
+  }
+  return persistedState;
+}
+
 export const useInterviewStore = create(
   persist(
     (set) => ({
       // ── Interview Setup ──────────────────────────────────────────────────
-      setup: {
-        aiProvider: 'openai',
-        sttProvider: 'auto',
-        autoHideWindowsLiveCaptions: false,
-        windowsLiveCaptionsIncludeMicrophoneAudio: true,
-        topic: 'software-engineering',
-        interviewLangs: ['en-US'],
-        answerLang: 'en-US',
-        customInstructions: '',
-      },
+      setup: getDefaultSetup(),
 
       // ── Session Settings ─────────────────────────────────────────────────
       session: {
@@ -111,7 +215,12 @@ export const useInterviewStore = create(
 
       // ── Actions ──────────────────────────────────────────────────────────
       updateSetup: (data) =>
-        set((state) => ({ setup: { ...state.setup, ...data } })),
+        set((state) => ({
+          setup: normalizeSetup(
+            { ...state.setup, ...data },
+            { presenceSource: data }
+          ),
+        })),
       updateSession: (data) =>
         set((state) => ({ session: { ...state.session, ...data } })),
       updatePersonalInfo: (data) =>
@@ -174,6 +283,21 @@ export const useInterviewStore = create(
     {
       name: PERSIST_KEY,
       storage,
+      version: 1,
+      merge: (persistedState, currentState) => {
+        const persisted = extractPersistedState(persistedState);
+        return {
+          ...currentState,
+          ...persisted,
+          setup: normalizeSetup(
+            {
+              ...currentState.setup,
+              ...(persisted.setup || {}),
+            },
+            { presenceSource: persisted.setup || {} }
+          ),
+        };
+      },
       partialize: (state) => ({
         setup: state.setup,
         session: state.session,

@@ -39,9 +39,9 @@ In `server/.env`:
 LOCAL_TRANSCRIBE_URL=http://127.0.0.1:8765/transcribe
 ```
 
-Desktop `Interview Setup -> Transcription Provider`:
-- `Auto` (System: Windows Live Captions -> OpenAI -> Local -> Gemini), or
-- `Local Whisper Service`.
+Desktop `Interview Setup`:
+- `Microphone Provider -> Local Whisper (Experimental)`, and/or
+- `System Audio Provider -> Local Whisper (Experimental)`.
 
 ## 4. Optional model tuning
 
@@ -80,7 +80,7 @@ Should return JSON with `status: "ok"`.
 
 ## Electron auto start/stop
 
-When running in packaged Electron app and using `Mic + System` with `Transcription Provider = Auto/Local`:
+When running in packaged Electron app and a source explicitly uses `Local Whisper (Experimental)`:
 
 - Start listening: app tries to ensure local-whisper service is running.
 - Stop listening / end session: app releases service lease and auto-stops managed local service.

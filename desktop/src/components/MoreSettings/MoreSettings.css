@@ -171,6 +171,11 @@
   margin-top: 2px;
 }
 
+.settings-section .form-select option {
+  background: #1e2535;
+  color: #e2e8f0;
+}
+
 /* ── Profile Sync ────────────────────────────────────────────────────────── */
 
 .sync-hint {

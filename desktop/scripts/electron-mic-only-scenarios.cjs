@@ -34,46 +34,28 @@ function run(command, args, options = {}) {
   }
 }
 
-function buildScenario(fixtures, mode = 'local') {
+function buildScenario(fixtures, mode = 'webspeech') {
   const fixtureById = Object.fromEntries(fixtures.map((fixture) => [fixture.id, fixture]));
-  const useWindowsLiveCaptions = mode === 'windows-live-captions';
-
   return {
     name: `mic-only-${mode}`,
     fixtures,
     capture: {
       mic: {
-        emissions: useWindowsLiveCaptions
-          ? []
-          : [
-            {
-              fixtureId: fixtureById['mic-answer-mono'].id,
-              atMs: 320,
-              delayMs: 30,
-              text: fixtureById['mic-answer-mono'].text,
-            },
-          ],
+        emissions: [
+          {
+            fixtureId: fixtureById['mic-answer-mono'].id,
+            atMs: 320,
+            delayMs: 30,
+            text: fixtureById['mic-answer-mono'].text,
+          },
+        ],
       },
       system: {
-        eager: useWindowsLiveCaptions,
-        emissions: useWindowsLiveCaptions
-          ? [
-            {
-              fixtureId: fixtureById['system-question-stereo'].id,
-              atMs: 320,
-              delayMs: 30,
-              text: fixtureById['system-question-stereo'].text,
-            },
-          ]
-          : [],
+        eager: false,
+        emissions: [],
       },
     },
-    detectQuestion: [
-      {
-        contains: fixtureById['system-question-stereo'].text,
-        question: fixtureById['system-question-stereo'].text,
-      },
-    ],
+    detectQuestion: [],
     answer: {
       events: [
         { data: { text: 'Mocked answer for mic-only scenario.' }, delayMs: 50 },
@@ -83,7 +65,7 @@ function buildScenario(fixtures, mode = 'local') {
   };
 }
 
-async function runCase({ mode, providerLabel, expectedText, screenshotName }) {
+async function runCase({ mode, providerLabel, expectedText, screenshotName, configureProviders }) {
   let lastError;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const fixtures = JSON.parse(fs.readFileSync(fixtureManifestPath, 'utf8'));
@@ -110,7 +92,7 @@ async function runCase({ mode, providerLabel, expectedText, screenshotName }) {
       const page = await electronApp.firstWindow();
       await page.waitForLoadState('domcontentloaded');
       await page.getByRole('heading', { name: 'Caption Mode Setup' }).waitFor({ state: 'visible' });
-      await page.getByLabel('Transcription Provider').selectOption(mode);
+      await configureProviders(page, mode);
       await page.locator('button.btn-primary').click();
 
       await page.getByRole('heading', { name: 'Session Settings' }).waitFor({ state: 'visible' });
@@ -123,7 +105,7 @@ async function runCase({ mode, providerLabel, expectedText, screenshotName }) {
       await page.waitForFunction((text) => document.body?.innerText?.includes(text), expectedText);
       await page.waitForFunction((provider) => document.body?.innerText?.includes(provider), providerLabel);
       const bodyText = await page.evaluate(() => document.body?.innerText || '');
-      assert(!bodyText.includes('Mic=webspeech'), 'Mic only should no longer be hard-wired to webspeech in Electron');
+      assert(!bodyText.includes('Mic=windows-live-captions + mic-assist'), 'Mic only should not fall back to the old combined WLC label');
       assert(
         !bodyText.includes('Windows Live Captions is running, but no readable subtitle text was captured yet.'),
         'Mic only transcript should not show the empty Windows Live Captions warning once text is captured.'
@@ -150,17 +132,13 @@ async function main() {
   run('npm.cmd', ['run', 'react-build']);
 
   await runCase({
-    mode: 'local',
-    providerLabel: 'Mic=local',
+    mode: 'webspeech',
+    providerLabel: 'Mic=webspeech',
     expectedText: 'My biggest strength is staying calm under pressure and creating clarity for the team.',
-    screenshotName: 'electron-mic-only-local.png',
-  });
-
-  await runCase({
-    mode: 'windows-live-captions',
-    providerLabel: 'Mic=windows-live-captions + mic-assist',
-    expectedText: 'Tell me about your biggest strength?',
-    screenshotName: 'electron-mic-only-windows-live-captions.png',
+    screenshotName: 'electron-mic-only-webspeech.png',
+    configureProviders: async () => {
+      // Keep default recommended mic provider.
+    },
   });
 
   console.log('Electron mic-only scenarios passed.');

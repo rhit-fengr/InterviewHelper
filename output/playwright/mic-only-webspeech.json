@@ -1,5 +1,5 @@
 {
-  "name": "windows-live-captions-mic-system-split",
+  "name": "mic-only-webspeech",
   "fixtures": [
     {
       "id": "system-question-stereo",
@@ -47,37 +47,25 @@
       "emissions": [
         {
           "fixtureId": "mic-answer-mono",
-          "atMs": 1800,
-          "delayMs": 25,
+          "atMs": 320,
+          "delayMs": 30,
           "text": "My biggest strength is staying calm under pressure and creating clarity for the team."
         }
       ]
     },
     "system": {
-      "eager": true,
-      "emissions": [
-        {
-          "fixtureId": "system-question-stereo",
-          "atMs": 320,
-          "delayMs": 30,
-          "text": "Tell me about your biggest strength?"
-        }
-      ]
+      "eager": false,
+      "emissions": []
     }
   },
-  "detectQuestion": [
-    {
-      "contains": "Tell me about your biggest strength?",
-      "question": "Tell me about your biggest strength?"
-    }
-  ],
+  "detectQuestion": [],
   "answer": {
     "events": [
       {
         "data": {
-          "text": "Mocked answer from the WLC split-route scenario."
+          "text": "Mocked answer for mic-only scenario."
         },
-        "delayMs": 60
+        "delayMs": 50
       },
       {
         "data": {

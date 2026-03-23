@@ -100,11 +100,11 @@ npm run test:e2e
 预期：
 - Electron 窗口能直接从本地 build 启动，不依赖手工打开 `localhost:3000`
 - 自动完成 Setup -> Session -> Standard Mode 主链路
-- 自动覆盖 Electron `Mic only` 模式下的 `local` / `windows-live-captions` provider
-- 自动覆盖 `Mic + System + windows-live-captions + mic-assist` 的组合线路
+- 自动覆盖 Electron `Mic only` 模式下的默认 `webspeech` 路线
+- 自动覆盖 `Mic + System` 下 `Mic=webspeech`、`System=windows-live-captions` 的分路线路
 - 自动生成截图到 `output/playwright/electron-smoke.png`
-- 自动生成 `Mic only` 截图到 `output/playwright/electron-mic-only-local.png`
-- 自动生成 WLC 组合线路截图到 `output/playwright/electron-wlc-mic-system.png`
+- 自动生成 `Mic only` 截图到 `output/playwright/electron-mic-only-webspeech.png`
+- 自动生成 WLC 分路线路截图到 `output/playwright/electron-wlc-mic-system.png`
 - 自动生成双来源音频截图到 `output/playwright/electron-audio-overlap.png`
 
 ---

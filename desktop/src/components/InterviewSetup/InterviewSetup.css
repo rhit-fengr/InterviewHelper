@@ -97,18 +97,8 @@
   margin: 0;
 }
 
-.btn-link {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  color: #a78bfa;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0;
-}
-
-.btn-link:hover {
-  color: #c4b5fd;
+.windows-live-captions-group {
+  gap: 8px;
 }
 
 .advanced-caption-options {
@@ -172,11 +162,28 @@
   color: #94a3b8;
 }
 
+.checkbox-row--stacked {
+  align-items: flex-start;
+}
+
 .checkbox-row input[type="checkbox"] {
   accent-color: #a78bfa;
   width: 14px;
   height: 14px;
   flex-shrink: 0;
+}
+
+.checkbox-row-title {
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.checkbox-row-copy {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+  margin-top: 2px;
 }
 
 /* ── Auth entry point ────────────────────────────────────────────────────── */

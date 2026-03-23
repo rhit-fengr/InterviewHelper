@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useInterviewStore } from '../../store/interviewStore';
-import { AI_PROVIDERS, TOPICS, LANGUAGES } from '../../constants';
+import { AI_PROVIDERS, TOPICS, LANGUAGES, MIC_PROVIDERS, SYSTEM_PROVIDERS } from '../../constants';
 import './InterviewSetup.css';
 
 export default function InterviewSetup({ onStart, onAuth }) {
   const { setup, updateSetup, auth } = useInterviewStore();
   const isAuthenticated = !!auth.token && !!auth.user;
-  const [showAdvancedCaptions, setShowAdvancedCaptions] = useState(false);
   const selectedProvider = setup.aiProvider || 'openai';
   const autoHideWindowsLiveCaptions = setup.autoHideWindowsLiveCaptions === true;
-  const windowsLiveCaptionsIncludeMicrophoneAudio =
-    setup.windowsLiveCaptionsIncludeMicrophoneAudio !== false;
+  const windowsLiveCaptionsMicrophoneAssist = setup.windowsLiveCaptionsMicrophoneAssist === true;
+  const micProvider = setup.micProvider || 'webspeech';
+  const systemProvider = setup.systemProvider || 'windows-live-captions';
   // Support legacy single-value migration: ensure interviewLangs is always an array
   const interviewLangs = Array.isArray(setup.interviewLangs)
     ? setup.interviewLangs
@@ -23,6 +23,11 @@ export default function InterviewSetup({ onStart, onAuth }) {
   }, [setup.aiProvider, updateSetup]);
 
   const handleChange = (field) => (e) => updateSetup({ [field]: e.target.value });
+
+  const showWindowsLiveCaptionsControls = (
+    systemProvider === 'windows-live-captions'
+    || windowsLiveCaptionsMicrophoneAssist
+  );
 
   const handleInterviewLangToggle = (langValue) => {
     const current = interviewLangs;
@@ -55,50 +60,68 @@ export default function InterviewSetup({ onStart, onAuth }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label" htmlFor="setup-stt-provider">Transcription Provider</label>
+        <label className="form-label" htmlFor="setup-mic-provider">Microphone Provider</label>
         <select
-          id="setup-stt-provider"
+          id="setup-mic-provider"
           className="form-select"
-          value={setup.sttProvider || 'auto'}
-          onChange={handleChange('sttProvider')}
+          value={micProvider}
+          onChange={handleChange('micProvider')}
         >
-          <option value="auto">Auto (OpenAI -> Local -> Gemini, then Windows Live Captions for system fallback)</option>
-          <option value="windows-live-captions">Windows Live Captions (Windows 11 accessibility capture)</option>
-          <option value="local">Local Whisper Service (no cloud)</option>
-          <option value="openai">OpenAI (Whisper)</option>
-          <option value="gemini">Gemini (best effort)</option>
+          {MIC_PROVIDERS.map((provider) => (
+            <option key={provider.value} value={provider.value}>{provider.label}</option>
+          ))}
+        </select>
+        <p className="setup-note">
+          Browser Speech keeps the candidate microphone route separate from system captions and is the default mic path.
+        </p>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="setup-system-provider">System Audio Provider</label>
+        <select
+          id="setup-system-provider"
+          className="form-select"
+          value={systemProvider}
+          onChange={handleChange('systemProvider')}
+        >
+          {SYSTEM_PROVIDERS.map((provider) => (
+            <option key={provider.value} value={provider.value}>{provider.label}</option>
+          ))}
         </select>
         <p className="setup-note">
           Windows Live Captions is best-effort on Windows 11 and depends on the OS accessibility layer, not an official transcript API.
         </p>
-        <button
-          type="button"
-          className="btn-link"
-          onClick={() => setShowAdvancedCaptions((prev) => !prev)}
-        >
-          {showAdvancedCaptions ? 'Hide Live Captions options' : 'Show Live Captions options'}
-        </button>
-        {showAdvancedCaptions && (
+      </div>
+
+      {showWindowsLiveCaptionsControls && (
+        <div className="form-group windows-live-captions-group">
+          <div className="form-label">Windows Live Captions</div>
           <div className="advanced-caption-options">
-            <label className="checkbox-row">
+            <label className="checkbox-row checkbox-row--stacked">
               <input
                 type="checkbox"
                 checked={autoHideWindowsLiveCaptions}
                 onChange={(e) => updateSetup({ autoHideWindowsLiveCaptions: e.target.checked })}
               />
-              <span>Auto-hide Live Captions after text starts flowing (experimental)</span>
+              <div>
+                <div className="checkbox-row-title">Auto-hide after captions start</div>
+                <div className="checkbox-row-copy">Decide this before Listening starts. If hiding fails, capture should continue.</div>
+              </div>
             </label>
-            <label className="checkbox-row">
+            <label className="checkbox-row checkbox-row--stacked">
               <input
                 type="checkbox"
-                checked={windowsLiveCaptionsIncludeMicrophoneAudio}
-                onChange={(e) => updateSetup({ windowsLiveCaptionsIncludeMicrophoneAudio: e.target.checked })}
+                checked={windowsLiveCaptionsMicrophoneAssist}
+                onChange={(e) => updateSetup({ windowsLiveCaptionsMicrophoneAssist: e.target.checked })}
               />
-              <span>Try to enable “Include microphone audio” automatically</span>
+              <div>
+                <div className="checkbox-row-title">Use microphone assist</div>
+                <div className="checkbox-row-copy">Experimental / Compatibility. Keeps the native mic route separate and only tries to help Windows captions.</div>
+              </div>
             </label>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="form-group">
         <label className="form-label" htmlFor="setup-topic">Topic</label>

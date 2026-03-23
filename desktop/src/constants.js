@@ -34,6 +34,20 @@ export const LANGUAGES = [
   { value: 'ar-SA', label: 'Arabic' },
 ];
 
+export const MIC_PROVIDERS = [
+  { value: 'webspeech', label: 'Browser Speech (Recommended)' },
+  { value: 'openai', label: 'OpenAI Whisper' },
+  { value: 'gemini', label: 'Gemini (Best effort)' },
+  { value: 'local', label: 'Local Whisper (Experimental)' },
+];
+
+export const SYSTEM_PROVIDERS = [
+  { value: 'windows-live-captions', label: 'Windows Live Captions (Recommended on Windows)' },
+  { value: 'openai', label: 'OpenAI Whisper' },
+  { value: 'gemini', label: 'Gemini (Best effort)' },
+  { value: 'local', label: 'Local Whisper (Experimental)' },
+];
+
 export const BEHAVIORAL_STRUCTURES = ['STAR', 'CAR', 'PAR', 'SOAR'];
 
 export const ANSWER_LENGTHS = [

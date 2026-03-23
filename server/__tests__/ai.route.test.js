@@ -332,7 +332,7 @@ describe('AI transcribe chunk route', () => {
 
   it('falls through to next provider when current provider returns empty text', async () => {
     isTranscribeProviderConfigured.mockImplementation((provider) => (
-      provider === 'windows-live-captions' || provider === 'local'
+      provider === 'windows-live-captions' || provider === 'openai'
     ));
     transcribeAudioChunk
       .mockResolvedValueOnce('')
@@ -350,22 +350,23 @@ describe('AI transcribe chunk route', () => {
     expect(res.status).toBe(200);
     expect(res.body.text).toBe('fallback transcript');
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      provider: 'local',
+      provider: 'windows-live-captions',
       sourceMode: 'system',
     }));
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      provider: 'windows-live-captions',
+      provider: 'openai',
       sourceMode: 'system',
     }));
   });
 
-  it('auto-falls back to local transcribe provider when cloud providers are unavailable', async () => {
-    isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'local');
-    transcribeAudioChunk.mockResolvedValue('local transcript');
+  it('auto-falls back to windows-live-captions for system source when cloud providers are unavailable', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'windows-live-captions');
+    transcribeAudioChunk.mockResolvedValue('system transcript');
 
     const res = await request(app)
       .post('/api/ai/transcribe-chunk')
       .field('transcribeProvider', 'auto')
+      .field('sourceMode', 'system')
       .attach('audio', Buffer.from('fake-audio'), {
         filename: 'chunk.webm',
         contentType: 'audio/webm',
@@ -373,14 +374,15 @@ describe('AI transcribe chunk route', () => {
 
     expect(res.status).toBe(200);
     expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'local',
+      provider: 'windows-live-captions',
       mimeType: 'audio/webm',
+      sourceMode: 'system',
     }));
   });
 
-  it('auto prefers openai over local/gemini when openai is configured', async () => {
+  it('auto prefers openai over gemini for mic source when openai is configured', async () => {
     isTranscribeProviderConfigured.mockImplementation((provider) => (
-      provider === 'openai' || provider === 'local' || provider === 'gemini'
+      provider === 'openai' || provider === 'gemini'
     ));
     transcribeAudioChunk.mockResolvedValue('openai transcript');
 
@@ -399,14 +401,14 @@ describe('AI transcribe chunk route', () => {
     }));
   });
 
-  it('auto falls back to windows-live-captions for system source when cloud/local are unavailable', async () => {
-    isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'windows-live-captions');
-    transcribeAudioChunk.mockResolvedValue('system transcript');
+  it('auto falls back to gemini for mic source when openai is unavailable', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'gemini');
+    transcribeAudioChunk.mockResolvedValue('gemini transcript');
 
     const res = await request(app)
       .post('/api/ai/transcribe-chunk')
       .field('transcribeProvider', 'auto')
-      .field('sourceMode', 'system')
+      .field('sourceMode', 'mic')
       .attach('audio', Buffer.from('fake-audio'), {
         filename: 'chunk.webm',
         contentType: 'audio/webm',
@@ -414,50 +416,23 @@ describe('AI transcribe chunk route', () => {
 
     expect(res.status).toBe(200);
     expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'windows-live-captions',
-      sourceMode: 'system',
+      provider: 'gemini',
+      sourceMode: 'mic',
     }));
   });
 
-  it('auto failovers to local when openai transcription is unavailable at runtime', async () => {
+  it('auto failovers to gemini when openai transcription is unavailable at runtime for mic source', async () => {
     isTranscribeProviderConfigured.mockImplementation((provider) => (
-      provider === 'openai' || provider === 'local' || provider === 'gemini'
+      provider === 'openai' || provider === 'gemini'
     ));
     transcribeAudioChunk
       .mockRejectedValueOnce(Object.assign(new Error('openai unavailable'), { status: 503 }))
-      .mockResolvedValueOnce('local transcript');
-
-    const res = await request(app)
-      .post('/api/ai/transcribe-chunk')
-      .field('transcribeProvider', 'auto')
-      .attach('audio', Buffer.from('fake-audio'), {
-        filename: 'chunk.webm',
-        contentType: 'audio/webm',
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body.text).toBe('local transcript');
-    expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      provider: 'openai',
-      mimeType: 'audio/webm',
-    }));
-    expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      provider: 'local',
-      mimeType: 'audio/webm',
-    }));
-  });
-
-  it('auto failovers to gemini when local transcription is unavailable at runtime', async () => {
-    isTranscribeProviderConfigured.mockImplementation((provider) => (
-      provider === 'local' || provider === 'gemini'
-    ));
-    transcribeAudioChunk
-      .mockRejectedValueOnce(Object.assign(new Error('local down'), { status: 503 }))
       .mockResolvedValueOnce('gemini transcript');
 
     const res = await request(app)
       .post('/api/ai/transcribe-chunk')
       .field('transcribeProvider', 'auto')
+      .field('sourceMode', 'mic')
       .attach('audio', Buffer.from('fake-audio'), {
         filename: 'chunk.webm',
         contentType: 'audio/webm',
@@ -466,11 +441,35 @@ describe('AI transcribe chunk route', () => {
     expect(res.status).toBe(200);
     expect(res.body.text).toBe('gemini transcript');
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      provider: 'local',
+      provider: 'openai',
       mimeType: 'audio/webm',
     }));
     expect(transcribeAudioChunk).toHaveBeenNthCalledWith(2, expect.objectContaining({
       provider: 'gemini',
+      mimeType: 'audio/webm',
+    }));
+  });
+
+  it('explicit local still works when selected directly', async () => {
+    isTranscribeProviderConfigured.mockImplementation((provider) => (
+      provider === 'local'
+    ));
+    transcribeAudioChunk.mockResolvedValue('local transcript');
+
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('transcribeProvider', 'local')
+      .field('sourceMode', 'mic')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.webm',
+        contentType: 'audio/webm',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('local transcript');
+    expect(transcribeAudioChunk).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'local',
+      sourceMode: 'mic',
       mimeType: 'audio/webm',
     }));
   });

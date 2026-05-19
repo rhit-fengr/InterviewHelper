@@ -317,6 +317,15 @@ Detailed signing and installer acceptance checklist:
 Subtitle-plugin evolution plan:
 - `docs/SUBTITLE_PLUGIN_ROADMAP.md`
 
+Source-specific transcription handoff docs:
+- `docs/source-specific-transcription-acceptance.md`
+- `docs/source-specific-transcription-compatibility.md`
+- `docs/source-specific-transcription-release-checklist.md`
+- `docs/source-specific-transcription-release-note.md`
+
+Operational troubleshooting:
+- `TROUBLESHOOTING.md`
+
 ---
 
 ## Tech Stack
@@ -366,7 +375,12 @@ Subtitle-plugin evolution plan:
 **"Failed to fetch" or "Cannot connect to server" error**
 - The backend server is not running. Start it with `cd server && npm run dev`.
 - Make sure `server/.env` exists and the selected provider key is set (`OPENAI_API_KEY` or `GEMINI_API_KEY`).
+- If you changed `server/.env`, restart the server. The app only reads provider keys and defaults at server startup.
 - If the desktop React app is served on a different port/host than the default `http://localhost:4000`, update `REACT_APP_SERVER_URL` in `desktop/.env.local`.
+
+**Legacy transcription field compatibility**
+- The current desktop app sends `transcribeProvider` for chunk transcription.
+- In this major release, the server no longer accepts legacy `sttProvider`. Callers must send `transcribeProvider`.
 
 **"AI service is not configured" error**
 - The selected provider key is missing in `server/.env`.
@@ -383,6 +397,7 @@ Subtitle-plugin evolution plan:
 - Your OpenAI account has hit its per-minute token limit. Wait a few seconds and try again, or upgrade your OpenAI usage tier.
 - The server now applies provider-level cooldown (`AI_RATE_LIMIT_COOLDOWN_MS`, default 60s) after a 429 to avoid repeatedly hammering the API.
 - During cooldown, question detection automatically falls back to heuristic parsing instead of calling the model.
+- If `AI Provider = OpenAI` is selected, the desktop sends `openai` to the server. Gemini is only used if the server-side failover path is enabled and the selected provider fails.
 
 **"Gemini rejected this request (400)" error**
 - Verify `AI_PROVIDER=gemini` and `GEMINI_API_KEY` are set in `server/.env`.

@@ -6,6 +6,7 @@ import './InterviewSetup.css';
 export default function InterviewSetup({ onStart, onAuth }) {
   const { setup, updateSetup, auth } = useInterviewStore();
   const isAuthenticated = !!auth.token && !!auth.user;
+  const isWindowsRuntime = typeof navigator !== 'undefined' && /win/i.test(String(navigator.platform || ''));
   const selectedProvider = setup.aiProvider || 'openai';
   const autoHideWindowsLiveCaptions = setup.autoHideWindowsLiveCaptions === true;
   const windowsLiveCaptionsMicrophoneAssist = setup.windowsLiveCaptionsMicrophoneAssist === true;
@@ -22,11 +23,20 @@ export default function InterviewSetup({ onStart, onAuth }) {
     }
   }, [setup.aiProvider, updateSetup]);
 
+  useEffect(() => {
+    if (!isWindowsRuntime && systemProvider === 'windows-live-captions') {
+      updateSetup({ systemProvider: 'openai' });
+    }
+  }, [isWindowsRuntime, systemProvider, updateSetup]);
+
   const handleChange = (field) => (e) => updateSetup({ [field]: e.target.value });
 
   const showWindowsLiveCaptionsControls = (
+    isWindowsRuntime
+    && (
     systemProvider === 'windows-live-captions'
     || windowsLiveCaptionsMicrophoneAssist
+    )
   );
 
   const handleInterviewLangToggle = (langValue) => {
@@ -85,11 +95,21 @@ export default function InterviewSetup({ onStart, onAuth }) {
           onChange={handleChange('systemProvider')}
         >
           {SYSTEM_PROVIDERS.map((provider) => (
-            <option key={provider.value} value={provider.value}>{provider.label}</option>
+            <option
+              key={provider.value}
+              value={provider.value}
+              disabled={provider.value === 'windows-live-captions' && !isWindowsRuntime}
+            >
+              {provider.value === 'windows-live-captions' && !isWindowsRuntime
+                ? 'Windows Live Captions (Windows only)'
+                : provider.label}
+            </option>
           ))}
         </select>
         <p className="setup-note">
-          Windows Live Captions is best-effort on Windows 11 and depends on the OS accessibility layer, not an official transcript API.
+          {isWindowsRuntime
+            ? 'Windows Live Captions is best-effort on Windows 11 and depends on the OS accessibility layer, not an official transcript API.'
+            : 'Windows Live Captions is unavailable on this OS. On Mac, use Browser Speech for mic and a cloud or local provider for system audio.'}
         </p>
       </div>
 

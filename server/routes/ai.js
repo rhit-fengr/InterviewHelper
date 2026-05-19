@@ -59,7 +59,7 @@ function getProviderFromRequest(req) {
 }
 
 function getTranscribeProviderFromRequest(req) {
-  const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
+  const rawExplicit = req.body?.transcribeProvider;
   const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
   if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local' || explicitRaw === 'windows-live-captions') {
     return normalizeTranscribeProvider(explicitRaw);
@@ -73,9 +73,14 @@ function getTranscribeProviderFromRequest(req) {
   return getProviderFromRequest(req);
 }
 
+function getRemovedLegacyTranscribeField(req) {
+  const legacyExplicit = typeof req.body?.sttProvider === 'string' && req.body.sttProvider.trim();
+  return legacyExplicit ? 'sttProvider' : '';
+}
+
 function getTranscribeProviderChain(req) {
   const sourceMode = String(req.body?.sourceMode || '').trim().toLowerCase();
-  const rawExplicit = req.body?.transcribeProvider || req.body?.sttProvider;
+  const rawExplicit = req.body?.transcribeProvider;
   const explicitRaw = typeof rawExplicit === 'string' ? rawExplicit.trim().toLowerCase() : '';
   if (explicitRaw === 'openai' || explicitRaw === 'gemini' || explicitRaw === 'local' || explicitRaw === 'windows-live-captions') {
     return [normalizeTranscribeProvider(explicitRaw)];
@@ -342,6 +347,16 @@ router.post('/transcribe-chunk', (req, res, next) => {
     next();
   });
 }, async (req, res) => {
+  const removedLegacyField = getRemovedLegacyTranscribeField(req);
+  if (removedLegacyField) {
+    return res.status(400).json({
+      error: 'sttProvider has been removed in this major release; use transcribeProvider.',
+      code: 'stt_provider_removed',
+      removedField: removedLegacyField,
+      replacementField: 'transcribeProvider',
+    });
+  }
+
   const providerChain = getTranscribeProviderChain(req);
   if (!req.file?.buffer) {
     return res.status(400).json({ error: 'audio chunk is required' });

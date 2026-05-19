@@ -309,6 +309,24 @@ describe('AI transcribe chunk route', () => {
     }));
   });
 
+  it('rejects legacy sttProvider and tells callers to use transcribeProvider', async () => {
+    const res = await request(app)
+      .post('/api/ai/transcribe-chunk')
+      .field('provider', 'openai')
+      .field('sttProvider', 'gemini')
+      .attach('audio', Buffer.from('fake-audio'), {
+        filename: 'chunk.ogg',
+        contentType: 'audio/ogg',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('sttProvider has been removed');
+    expect(res.body.code).toBe('stt_provider_removed');
+    expect(res.body.removedField).toBe('sttProvider');
+    expect(res.body.replacementField).toBe('transcribeProvider');
+    expect(transcribeAudioChunk).not.toHaveBeenCalled();
+  });
+
   it('system stream with explicit local honors explicit provider', async () => {
     isTranscribeProviderConfigured.mockImplementation((provider) => provider === 'local');
     transcribeAudioChunk.mockResolvedValue('local transcript');

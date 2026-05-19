@@ -12,7 +12,15 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 describe('ConnectScreen', () => {
   beforeEach(() => {
+    jest.useFakeTimers();
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
   });
 
   it('shows validation error when session code is missing', () => {
@@ -21,6 +29,7 @@ describe('ConnectScreen', () => {
     act(() => {
       fireEvent.changeText(getByTestId('server-url-input'), 'http://localhost:4000');
       fireEvent.press(getByTestId('connect-button'));
+      jest.runOnlyPendingTimers();
     });
 
     expect(getByText(/Please enter the session code/i)).toBeTruthy();
@@ -35,6 +44,7 @@ describe('ConnectScreen', () => {
 
     await act(async () => {
       fireEvent.press(getByTestId('connect-button'));
+      jest.runOnlyPendingTimers();
     });
 
     await waitFor(() => {

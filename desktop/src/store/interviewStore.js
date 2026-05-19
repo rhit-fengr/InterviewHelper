@@ -74,7 +74,6 @@ function deriveSourceProvidersFromLegacySttProvider(sttProvider = 'auto') {
 export function getDefaultSetup() {
   return {
     aiProvider: 'openai',
-    sttProvider: 'auto',
     micProvider: 'webspeech',
     systemProvider: 'windows-live-captions',
     autoHideWindowsLiveCaptions: false,
@@ -98,7 +97,10 @@ export function normalizeSetup(input = {}, options = {}) {
   const hasCanonicalAssist = typeof presenceSource?.windowsLiveCaptionsMicrophoneAssist === 'boolean';
   const hasLegacyAssist = typeof presenceSource?.windowsLiveCaptionsIncludeMicrophoneAudio === 'boolean';
 
-  const legacyMapping = deriveSourceProvidersFromLegacySttProvider(next.sttProvider);
+  const legacySttProvider = typeof presenceSource?.sttProvider === 'string'
+    ? presenceSource.sttProvider
+    : next.sttProvider;
+  const legacyMapping = deriveSourceProvidersFromLegacySttProvider(legacySttProvider);
   next.micProvider = hasMicProvider
     ? normalizeMicProvider(next.micProvider)
     : legacyMapping.micProvider;
@@ -119,6 +121,7 @@ export function normalizeSetup(input = {}, options = {}) {
   next.windowsLiveCaptionsIncludeMicrophoneAudio = next.windowsLiveCaptionsMicrophoneAssist;
   next.autoHideWindowsLiveCaptions = next.autoHideWindowsLiveCaptions === true;
   next.interviewLangs = normalizeLanguageList(next.interviewLangs || next.interviewLang);
+  delete next.sttProvider;
   return next;
 }
 
@@ -128,6 +131,29 @@ function extractPersistedState(persistedState) {
     return persistedState.state;
   }
   return persistedState;
+}
+
+export function migratePersistedStoreState(persistedState = {}) {
+  const persisted = extractPersistedState(persistedState);
+  const nextState = {
+    ...persisted,
+    setup: normalizeSetup({
+      ...getDefaultSetup(),
+      ...(persisted.setup || {}),
+    }, {
+      presenceSource: persisted.setup || {},
+    }),
+  };
+
+  if (persistedState && typeof persistedState === 'object' && persistedState.state) {
+    return {
+      ...persistedState,
+      state: nextState,
+      version: 2,
+    };
+  }
+
+  return nextState;
 }
 
 export const useInterviewStore = create(
@@ -283,7 +309,13 @@ export const useInterviewStore = create(
     {
       name: PERSIST_KEY,
       storage,
-      version: 1,
+      version: 2,
+      migrate: (persistedState, version) => {
+        if ((Number(version) || 0) < 2) {
+          return migratePersistedStoreState(persistedState);
+        }
+        return persistedState;
+      },
       merge: (persistedState, currentState) => {
         const persisted = extractPersistedState(persistedState);
         return {

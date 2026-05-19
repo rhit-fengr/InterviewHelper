@@ -1,4 +1,4 @@
-import { getDefaultSetup, normalizeSetup, useInterviewStore } from './interviewStore';
+import { getDefaultSetup, migratePersistedStoreState, normalizeSetup, useInterviewStore } from './interviewStore';
 
 describe('interviewStore setup migration', () => {
   beforeEach(() => {
@@ -22,7 +22,7 @@ describe('interviewStore setup migration', () => {
   it('defaults to source-specific providers', () => {
     const { setup } = useInterviewStore.getState();
 
-    expect(setup.sttProvider).toBe('auto');
+    expect(setup.sttProvider).toBeUndefined();
     expect(setup.micProvider).toBe('webspeech');
     expect(setup.systemProvider).toBe('windows-live-captions');
     expect(setup.windowsLiveCaptionsMicrophoneAssist).toBe(false);
@@ -54,6 +54,7 @@ describe('interviewStore setup migration', () => {
     expect(migrated.systemProvider).toBe('windows-live-captions');
     expect(migrated.windowsLiveCaptionsMicrophoneAssist).toBe(true);
     expect(migrated.windowsLiveCaptionsIncludeMicrophoneAudio).toBe(true);
+    expect(migrated.sttProvider).toBeUndefined();
   });
 
   it('maps legacy local provider to both sources explicitly', () => {
@@ -124,5 +125,20 @@ describe('interviewStore setup migration', () => {
     expect(setup.systemProvider).toBe('gemini');
     expect(runtime.sourceMode).toBe('Mic + System');
     expect(runtime.status).toBe('running');
+  });
+
+  it('migrates persisted legacy sttProvider into source-specific setup once', () => {
+    const migrated = migratePersistedStoreState({
+      setup: {
+        aiProvider: 'openai',
+        sttProvider: 'local',
+        topic: 'behavioral',
+      },
+    });
+
+    expect(migrated.setup.sttProvider).toBeUndefined();
+    expect(migrated.setup.micProvider).toBe('local');
+    expect(migrated.setup.systemProvider).toBe('local');
+    expect(migrated.setup.topic).toBe('behavioral');
   });
 });

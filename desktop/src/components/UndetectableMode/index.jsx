@@ -144,6 +144,14 @@ export default function UndetectableMode({ onBack }) {
   }, [clientConnected, sessionCode, streamTranscript, runQuestionDetection]);
 
   const audioInputMode = session.audioInputMode || 'mic';
+  const micProvider = String(setup.micProvider || 'webspeech').trim().toLowerCase();
+  const systemProvider = String(setup.systemProvider || 'windows-live-captions').trim().toLowerCase();
+  const windowsLiveCaptionsMicAssist = setup.windowsLiveCaptionsMicrophoneAssist === true;
+  const isDualMode = audioInputMode === 'mic-system';
+  const micUsesWebSpeech = micProvider === 'webspeech';
+  const useMicWebSpeech = isRunning && (audioInputMode === 'mic' || isDualMode) && micUsesWebSpeech;
+  const useMicProviderCapture = isRunning && (audioInputMode === 'mic' || isDualMode) && !micUsesWebSpeech;
+  const useSystemProviderCapture = isRunning && isDualMode;
   const interviewLangs = Array.isArray(setup.interviewLangs)
     ? setup.interviewLangs
     : [setup.interviewLang || 'en-US'];
@@ -172,38 +180,55 @@ export default function UndetectableMode({ onBack }) {
     }
   }, [audioInputMode, pushCombinedTranscript]);
 
-  const speechTranscript = useTranscript({
-    enabled: isRunning && (audioInputMode === 'mic' || audioInputMode === 'mic-system'),
+  const webSpeechTranscript = useTranscript({
+    enabled: useMicWebSpeech,
     language: interviewLangs,
     onTranscriptChange: handleMicTranscriptUpdate,
   });
 
-  const dualAudioTranscript = useDualAudioTranscript({
-    enabled: isRunning && audioInputMode === 'mic-system',
+  const micProviderTranscript = useDualAudioTranscript({
+    enabled: useMicProviderCapture,
     language: interviewLangs,
     provider: setup.aiProvider,
-    transcribeProvider: setup.sttProvider,
+    transcribeProvider: micProvider,
+    autoHideWindowsLiveCaptions: false,
+    includeWindowsLiveCaptionsMicrophoneAudio: false,
+    captureMic: true,
+    captureSystem: false,
+    onTranscriptChange: handleMicTranscriptUpdate,
+  });
+
+  const systemProviderTranscript = useDualAudioTranscript({
+    enabled: useSystemProviderCapture,
+    language: interviewLangs,
+    provider: setup.aiProvider,
+    transcribeProvider: systemProvider,
+    autoHideWindowsLiveCaptions: setup.autoHideWindowsLiveCaptions === true,
+    includeWindowsLiveCaptionsMicrophoneAudio:
+      systemProvider === 'windows-live-captions' && windowsLiveCaptionsMicAssist,
     captureMic: false,
     captureSystem: true,
     onTranscriptChange: handleSystemTranscriptUpdate,
   });
 
+  const activeMicTranscript = micUsesWebSpeech ? webSpeechTranscript : micProviderTranscript;
+
   const transcript = audioInputMode === 'mic-system'
-    ? [speechTranscript.transcript, dualAudioTranscript.transcript]
+    ? [activeMicTranscript.transcript, systemProviderTranscript.transcript]
       .map((value) => String(value || '').trim())
       .filter(Boolean)
       .join('\n')
-    : speechTranscript.transcript;
+    : activeMicTranscript.transcript;
   const transcriptPreview = getRecentTranscriptLines(transcript);
-  const activeLanguage = audioInputMode === 'mic-system'
-    ? speechTranscript.activeLanguage
-    : speechTranscript.activeLanguage;
+  const activeLanguage = activeMicTranscript.activeLanguage
+    || (useSystemProviderCapture ? systemProviderTranscript.activeLanguage : '')
+    || interviewLangs[0];
   const transcriptError = audioInputMode === 'mic-system'
-    ? [speechTranscript.error, dualAudioTranscript.error].filter(Boolean).join(' | ')
-    : speechTranscript.error;
+    ? [activeMicTranscript.error, systemProviderTranscript.error].filter(Boolean).join(' | ')
+    : activeMicTranscript.error;
   const isListening = audioInputMode === 'mic-system'
-    ? (speechTranscript.isListening || dualAudioTranscript.isListening)
-    : speechTranscript.isListening;
+    ? (activeMicTranscript.isListening || systemProviderTranscript.isListening)
+    : activeMicTranscript.isListening;
 
   useEffect(() => {
     activeLanguageRef.current = activeLanguage || activeLanguageRef.current;
@@ -242,8 +267,9 @@ export default function UndetectableMode({ onBack }) {
         pendingQuestionRef.current = null;
         micLiveTranscriptRef.current = '';
         systemLiveTranscriptRef.current = '';
-        speechTranscript.clearTranscript();
-        dualAudioTranscript.clearTranscript();
+        webSpeechTranscript.clearTranscript();
+        micProviderTranscript.clearTranscript();
+        systemProviderTranscript.clearTranscript();
       } else {
         lastAutoAnswerRef.current = null;
         micLiveTranscriptRef.current = '';

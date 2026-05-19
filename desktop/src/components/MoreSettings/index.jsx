@@ -22,13 +22,17 @@ export default function MoreSettings({ onBack }) {
   } = useInterviewStore();
 
   const isAuthenticated = !!auth.token && !!auth.user;
+  const isWindowsRuntime = typeof navigator !== 'undefined' && /win/i.test(String(navigator.platform || ''));
   const autoHideWindowsLiveCaptions = setup.autoHideWindowsLiveCaptions === true;
   const windowsLiveCaptionsMicrophoneAssist = setup.windowsLiveCaptionsMicrophoneAssist === true;
   const micProvider = setup.micProvider || 'webspeech';
   const systemProvider = setup.systemProvider || 'windows-live-captions';
   const showWindowsLiveCaptionsControls = (
+    isWindowsRuntime
+    && (
     systemProvider === 'windows-live-captions'
     || windowsLiveCaptionsMicrophoneAssist
+    )
   );
   const [syncStatus, setSyncStatus] = useState(''); // '', 'pushing', 'pulling', 'push-ok', 'pull-ok', 'error'
   const [syncError, setSyncError] = useState('');
@@ -129,9 +133,20 @@ export default function MoreSettings({ onBack }) {
             onChange={(e) => updateSetup({ systemProvider: e.target.value })}
           >
             {SYSTEM_PROVIDERS.map((provider) => (
-              <option key={provider.value} value={provider.value}>{provider.label}</option>
+              <option
+                key={provider.value}
+                value={provider.value}
+                disabled={provider.value === 'windows-live-captions' && !isWindowsRuntime}
+              >
+                {provider.value === 'windows-live-captions' && !isWindowsRuntime
+                  ? 'Windows Live Captions (Windows only)'
+                  : provider.label}
+              </option>
             ))}
           </select>
+          {!isWindowsRuntime && (
+            <div className="checkbox-desc">Windows Live Captions is unavailable on this OS. Use a cloud or local system-audio provider instead.</div>
+          )}
         </div>
 
         {showWindowsLiveCaptionsControls && (

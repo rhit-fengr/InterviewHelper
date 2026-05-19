@@ -29,8 +29,10 @@ const {
 
 describe('AI answer streaming route', () => {
   let app;
+  let warnSpy;
 
   beforeEach(() => {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     app = express();
     app.use(express.json());
     app.use('/api/ai', aiRouter);
@@ -41,6 +43,7 @@ describe('AI answer streaming route', () => {
     isProviderConfigured.mockReturnValue(true);
     normalizeProvider.mockImplementation((provider) => provider || 'openai');
     getProviderCooldownRemainingMs.mockReturnValue(30_000);
+    warnSpy.mockRestore();
   });
 
   it('streams answer chunks and terminates with done event', async () => {
@@ -246,8 +249,10 @@ describe('AI screenshot answer route', () => {
 
 describe('AI transcribe chunk route', () => {
   let app;
+  let warnSpy;
 
   beforeEach(() => {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     app = express();
     app.use(express.json());
     app.use('/api/ai', aiRouter);
@@ -258,6 +263,7 @@ describe('AI transcribe chunk route', () => {
     normalizeProvider.mockImplementation((provider) => provider || 'openai');
     normalizeTranscribeProvider.mockImplementation((provider) => provider || 'openai');
     isTranscribeProviderConfigured.mockReturnValue(true);
+    warnSpy.mockRestore();
   });
 
   it('returns 400 when chunk is missing', async () => {
@@ -493,6 +499,7 @@ describe('AI transcribe chunk route', () => {
   });
 
   it('returns 429 with cooldown guidance for transcription rate limit', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     transcribeAudioChunk.mockRejectedValue(Object.assign(
       new Error('rate limited'),
       { status: 429, provider: 'openai', retryAfterMs: 12_000 }
@@ -507,9 +514,16 @@ describe('AI transcribe chunk route', () => {
 
     expect(res.status).toBe(429);
     expect(res.body.error).toContain('Wait about 12s');
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[AI transcribe-chunk] error:',
+      expect.objectContaining({ status: 429 })
+    );
+
+    errorSpy.mockRestore();
   });
 
   it('returns 503 message when transcription provider is not configured', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     transcribeAudioChunk.mockRejectedValue(Object.assign(
       new Error('Audio transcription requires GEMINI_API_KEY.'),
       { status: 503, provider: 'gemini' }
@@ -524,5 +538,11 @@ describe('AI transcribe chunk route', () => {
 
     expect(res.status).toBe(503);
     expect(res.body.error).toContain('GEMINI_API_KEY');
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[AI transcribe-chunk] error:',
+      expect.objectContaining({ status: 503 })
+    );
+
+    errorSpy.mockRestore();
   });
 });

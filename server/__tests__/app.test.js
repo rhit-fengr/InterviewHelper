@@ -1,8 +1,13 @@
 'use strict';
 
 const request = require('supertest');
+const appWarningSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 const app = require('../app');
 const { resetAuthState } = require('../services/auth.service');
+
+afterAll(() => {
+  appWarningSpy.mockRestore();
+});
 
 beforeEach(() => {
   resetAuthState();

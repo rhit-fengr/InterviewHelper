@@ -1,5 +1,7 @@
 'use strict';
 
+const serviceWarningSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
 const {
   buildSystemPrompt,
   isConfigured,
@@ -9,6 +11,10 @@ const {
   isTranscribeProviderConfigured,
   transcribeAudioChunk,
 } = require('../services/openai.service');
+
+afterAll(() => {
+  serviceWarningSpy.mockRestore();
+});
 
 describe('buildSystemPrompt', () => {
   it('includes candidate name', () => {

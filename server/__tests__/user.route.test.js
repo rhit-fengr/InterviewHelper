@@ -41,6 +41,8 @@ describe('user auth routes', () => {
   });
 
   it('requires auth for profile reads and writes', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
     const readRes = await request(app).get('/api/user/profile');
     const writeRes = await request(app)
       .put('/api/user/profile')
@@ -48,6 +50,12 @@ describe('user auth routes', () => {
 
     expect(readRes.status).toBe(401);
     expect(writeRes.status).toBe(401);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[user] update profile error:',
+      expect.objectContaining({ status: 401 })
+    );
+
+    errorSpy.mockRestore();
   });
 
   it('returns and updates profile for an authenticated user', async () => {

@@ -46,6 +46,11 @@
     "production": [">0.2%", "not dead", "not op_mini all"],
     "development": ["last 1 chrome version"]
   },
+  "overrides": {
+    "underscore": "1.13.8",
+    "ws": "8.20.1",
+    "yaml": "2.9.0"
+  },
   "build": {
     "appId": "com.interviewaihamburger.desktop",
     "productName": "Interview AI Hamburger",

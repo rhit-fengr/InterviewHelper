@@ -95,7 +95,10 @@ def _normalize_language_hint(language: str) -> Optional[str]:
     if not value:
         return None
     # Convert BCP-47 style hints (e.g. zh-CN, en-US) into Whisper language tags.
-    return value.split("-")[0]
+    primary = value.split("-")[0]
+    if primary in {"auto", "default", "none", "und"}:
+        return None
+    return primary
 
 
 def _get_model() -> WhisperModel:

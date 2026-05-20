@@ -35,6 +35,8 @@ class LocalWhisperServiceTest(unittest.IsolatedAsyncioTestCase):
     def test_normalizes_bcp47_language_hint_for_whisper(self) -> None:
         self.assertEqual(service_app._normalize_language_hint("en-US"), "en")
         self.assertEqual(service_app._normalize_language_hint(" zh-CN "), "zh")
+        self.assertIsNone(service_app._normalize_language_hint("auto"))
+        self.assertIsNone(service_app._normalize_language_hint("default"))
         self.assertIsNone(service_app._normalize_language_hint(""))
 
     async def test_skips_tiny_audio_chunks_without_loading_model(self) -> None:

@@ -84,6 +84,7 @@ def _is_recoverable_chunk_error(exc: Exception) -> bool:
             "error while decoding stream",
             "could not find codec parameters",
             "end of file",
+            "moov atom not found",
             "input contains nan",
         )
     )

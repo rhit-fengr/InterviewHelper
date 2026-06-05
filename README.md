@@ -117,6 +117,13 @@ npm start
 
 This launches the React dev server on port 3000, then opens the Electron window.
 
+For macOS packaging:
+
+```bash
+cd desktop
+npm run build:mac
+```
+
 ### 3. Start the mobile companion app (Undetectable Mode)
 
 ```bash

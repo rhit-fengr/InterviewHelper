@@ -13,6 +13,7 @@
     "react-build": "react-scripts build",
     "build": "npm run clean:pack && npm run react-build && electron-builder",
     "build:win": "npm run build:win:unsigned",
+    "build:mac": "npm run react-build && electron-builder --mac",
     "build:win:signed": "npm run clean:pack && npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win nsis --x64",
     "build:win:unsigned": "npm run clean:pack && npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win nsis --x64 --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
     "build:win:portable": "npm run clean:pack && npm run prepare:local-whisper-runtime && npm run react-build && electron-builder --win portable --x64 --config.win.signAndEditExecutable=false --config.forceCodeSigning=false",
